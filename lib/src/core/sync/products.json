@@ -1,0 +1,478 @@
+{
+    "data": [
+        {
+            "id": 3,
+            "slug": "ginger-onion-fish-3",
+            "uuid": "aa797fea-9301-4c91-9211-c9b5bb51e032",
+            "shop_id": 501,
+            "category_id": 1,
+            "status": "published",
+            "active": true,
+            "addon": false,
+            "vegetarian": true,
+            "img": "https://udgydtkgsrckzjduivbl.supabase.co/storage/v1/object/public/grooops/public/images/products/101-9e18145e-ba2d-49a9-b660-baf4c85a26d1.webp",
+            "min_qty": 1,
+            "max_qty": 999,
+            "interval": 1,
+            "created_at": "2025-12-22 03:52:45Z",
+            "updated_at": "2025-12-22 03:53:17Z",
+            "discounts": [],
+            "translation": {
+                "id": 7,
+                "locale": "en",
+                "title": "Ginger Onion Fish",
+                "description": "Ginger Onion Fish"
+            },
+            "translations": [
+                {
+                    "id": 7,
+                    "locale": "en",
+                    "title": "Ginger Onion Fish",
+                    "description": "Ginger Onion Fish"
+                }
+            ],
+            "locales": [
+                "en"
+            ],
+            "stocks": [
+                {
+                    "id": 4,
+                    "countable_id": 3,
+                    "price": 30,
+                    "quantity": 99985,
+                    "sku": "GingerOnionFish",
+                    "tax": 0,
+                    "total_price": 30,
+                    "addon": false,
+                    "addons": [],
+                    "extras": [],
+                    "bonus": null
+                }
+            ],
+            "shop": {
+                "id": 501,
+                "tax": 0,
+                "open": false,
+                "visibility": null,
+                "verify": null,
+                "status": "approved",
+                "avg_rate": 1,
+                "products_count": 0,
+                "translation": {
+                    "id": 3,
+                    "locale": "en",
+                    "title": "SEGA"
+                }
+            },
+            "category": {
+                "id": 1,
+                "uuid": "dff18991-254b-47a8-a21a-af99c0ad3c57",
+                "img": null,
+                "active": false,
+                "discount_setting_id": 1,
+                "translation": {
+                    "id": 9,
+                    "locale": "en",
+                    "title": "main"
+                },
+                "service_types": [
+                    {
+                        "id": 1,
+                        "name": "Dine In",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 2,
+                        "name": "Delivery",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 3,
+                        "name": "Take Away",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 4,
+                        "name": "Grab Food",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 5,
+                        "name": "Food Panda",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    }
+                ],
+                "discount_setting": {
+                    "id": 1,
+                    "title": "50% Off",
+                    "method": "percent",
+                    "value": "50.00",
+                    "active": true,
+                    "scope": "category"
+                }
+            },
+            "unit": {
+                "id": 1,
+                "active": true,
+                "position": "after",
+                "created_at": "2025-12-18 02:41:47Z",
+                "updated_at": "2025-12-18 02:41:47Z",
+                "translation": {
+                    "id": 1,
+                    "locale": "en",
+                    "title": "Quantity"
+                }
+            },
+            "reviews": [],
+            "product_pricing_tiers": [
+                {
+                    "id": 3,
+                    "slug": "member-3",
+                    "product_id": 3,
+                    "price": "20.0000",
+                    "created_at": null,
+                    "updated_at": null,
+                    "translations": []
+                },
+                {
+                    "id": 4,
+                    "slug": "member-4",
+                    "product_id": 3,
+                    "price": "25.0000",
+                    "created_at": null,
+                    "updated_at": null,
+                    "translations": [
+                        {
+                            "locale": "en",
+                            "title": "Member",
+                            "description": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": 2,
+            "slug": "sweet-n-sours-chicken-2",
+            "uuid": "6e1cac7d-53c8-4c08-837d-6c3d1bd42363",
+            "shop_id": 501,
+            "category_id": 1,
+            "status": "published",
+            "active": true,
+            "addon": false,
+            "vegetarian": true,
+            "img": "https://udgydtkgsrckzjduivbl.supabase.co/storage/v1/object/public/grooops/public/images/products/101-2cb3c256-f103-41ae-9d56-692350494bcb.webp",
+            "min_qty": 1,
+            "max_qty": 999,
+            "interval": 1,
+            "created_at": "2025-12-22 01:20:15Z",
+            "updated_at": "2025-12-22 01:20:54Z",
+            "discounts": [],
+            "translation": {
+                "id": 2,
+                "locale": "en",
+                "title": "Sweet n Sours Chicken",
+                "description": "Sweet and Sours Sauce simply cook magic food."
+            },
+            "translations": [
+                {
+                    "id": 2,
+                    "locale": "en",
+                    "title": "Sweet n Sours Chicken",
+                    "description": "Sweet and Sours Sauce simply cook magic food."
+                }
+            ],
+            "locales": [
+                "en"
+            ],
+            "stocks": [
+                {
+                    "id": 2,
+                    "countable_id": 2,
+                    "price": 12,
+                    "quantity": 99963,
+                    "sku": "10000",
+                    "tax": 0,
+                    "total_price": 12,
+                    "addon": false,
+                    "addons": [],
+                    "extras": [],
+                    "bonus": null
+                }
+            ],
+            "shop": {
+                "id": 501,
+                "tax": 0,
+                "open": false,
+                "visibility": null,
+                "verify": null,
+                "status": "approved",
+                "avg_rate": 1,
+                "products_count": 0,
+                "translation": {
+                    "id": 3,
+                    "locale": "en",
+                    "title": "SEGA"
+                }
+            },
+            "category": {
+                "id": 1,
+                "uuid": "dff18991-254b-47a8-a21a-af99c0ad3c57",
+                "img": null,
+                "active": false,
+                "discount_setting_id": 1,
+                "translation": {
+                    "id": 9,
+                    "locale": "en",
+                    "title": "main"
+                },
+                "service_types": [
+                    {
+                        "id": 1,
+                        "name": "Dine In",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 2,
+                        "name": "Delivery",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 3,
+                        "name": "Take Away",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 4,
+                        "name": "Grab Food",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 5,
+                        "name": "Food Panda",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    }
+                ],
+                "discount_setting": {
+                    "id": 1,
+                    "title": "50% Off",
+                    "method": "percent",
+                    "value": "50.00",
+                    "active": true,
+                    "scope": "category"
+                }
+            },
+            "unit": {
+                "id": 1,
+                "active": true,
+                "position": "after",
+                "created_at": "2025-12-18 02:41:47Z",
+                "updated_at": "2025-12-18 02:41:47Z",
+                "translation": {
+                    "id": 1,
+                    "locale": "en",
+                    "title": "Quantity"
+                }
+            },
+            "reviews": [],
+            "product_pricing_tiers": [
+                {
+                    "id": 2,
+                    "slug": "member-2",
+                    "product_id": 2,
+                    "price": "10.0000",
+                    "created_at": null,
+                    "updated_at": null,
+                    "translations": [
+                        {
+                            "locale": "en",
+                            "title": "Member",
+                            "description": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": 1,
+            "slug": "gong-bao-chicken-1",
+            "uuid": "40c3f471-fea3-4a21-9d58-b50ae3be1708",
+            "shop_id": 501,
+            "category_id": 1,
+            "status": "published",
+            "active": true,
+            "addon": false,
+            "vegetarian": true,
+            "img": "https://udgydtkgsrckzjduivbl.supabase.co/storage/v1/object/public/grooops/public/images/products/101-0ed5aa36-6400-4a3f-862f-5547858794a0.webp",
+            "min_qty": 1,
+            "max_qty": 99999,
+            "interval": 1,
+            "created_at": "2025-12-18 02:48:10Z",
+            "updated_at": "2025-12-22 05:48:23Z",
+            "discounts": [],
+            "translation": {
+                "id": 6,
+                "locale": "en",
+                "title": "Gong Bao Chicken",
+                "description": "Gong Bao Chicken"
+            },
+            "translations": [
+                {
+                    "id": 6,
+                    "locale": "en",
+                    "title": "Gong Bao Chicken",
+                    "description": "Gong Bao Chicken"
+                }
+            ],
+            "locales": [
+                "en"
+            ],
+            "stocks": [
+                {
+                    "id": 6,
+                    "countable_id": 1,
+                    "price": 30,
+                    "quantity": 99992,
+                    "sku": "A1",
+                    "tax": 0,
+                    "total_price": 30,
+                    "addon": false,
+                    "addons": [],
+                    "extras": [],
+                    "bonus": null
+                }
+            ],
+            "shop": {
+                "id": 501,
+                "tax": 0,
+                "open": false,
+                "visibility": null,
+                "verify": null,
+                "status": "approved",
+                "avg_rate": 1,
+                "products_count": 0,
+                "translation": {
+                    "id": 3,
+                    "locale": "en",
+                    "title": "SEGA"
+                }
+            },
+            "category": {
+                "id": 1,
+                "uuid": "dff18991-254b-47a8-a21a-af99c0ad3c57",
+                "img": null,
+                "active": false,
+                "discount_setting_id": 1,
+                "translation": {
+                    "id": 9,
+                    "locale": "en",
+                    "title": "main"
+                },
+                "service_types": [
+                    {
+                        "id": 1,
+                        "name": "Dine In",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 2,
+                        "name": "Delivery",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 3,
+                        "name": "Take Away",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 4,
+                        "name": "Grab Food",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    },
+                    {
+                        "id": 5,
+                        "name": "Food Panda",
+                        "enabled": false,
+                        "service_charge": "10.00",
+                        "sst_tax": "6.00"
+                    }
+                ],
+                "discount_setting": {
+                    "id": 1,
+                    "title": "50% Off",
+                    "method": "percent",
+                    "value": "50.00",
+                    "active": true,
+                    "scope": "category"
+                }
+            },
+            "unit": {
+                "id": 1,
+                "active": true,
+                "position": "after",
+                "created_at": "2025-12-18 02:41:47Z",
+                "updated_at": "2025-12-18 02:41:47Z",
+                "translation": {
+                    "id": 1,
+                    "locale": "en",
+                    "title": "Quantity"
+                }
+            },
+            "reviews": [],
+            "product_pricing_tiers": [
+                {
+                    "id": 1,
+                    "slug": "member-1",
+                    "product_id": 1,
+                    "price": "90.0000",
+                    "created_at": null,
+                    "updated_at": null,
+                    "translations": []
+                },
+                {
+                    "id": 5,
+                    "slug": "member-5",
+                    "product_id": 1,
+                    "price": "25.0000",
+                    "created_at": null,
+                    "updated_at": null,
+                    "translations": [
+                        {
+                            "locale": "en",
+                            "title": "Member",
+                            "description": null
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

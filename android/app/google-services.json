@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "274749991854",
+    "project_id": "pos-android-76bdb",
+    "storage_bucket": "pos-android-76bdb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:274749991854:android:69bd0f0074583a79ce763f",
+        "android_client_info": {
+          "package_name": "single.grooops.pos"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQ5-Mqod_tMLcQDPmXErpCQ1zRxKXSKfs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

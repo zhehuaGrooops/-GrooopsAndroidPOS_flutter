@@ -1,0 +1,121 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      ['main_offline_v2']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Override Secret Vars
+        run: |
+          cat <<EOF > lib/src/core/constants/secret_vars.dart
+          class SecretVars {
+            SecretVars._();
+            static const String baseUrl = "https://api.pos.grooops.com.my";
+            static const String webUrl = "https://grooops.com.my";
+          }
+          EOF
+
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Cache Pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install dependencies
+        run: flutter pub get
+      
+      - name: Cache Build Runner
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/build
+          key: ${{ runner.os }}-build-runner-${{ hashFiles('**/*.dart') }}
+          restore-keys: |
+            ${{ runner.os }}-build-runner-
+
+      - name: Run Build Runner
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Create google-services.json
+        if: ${{ env.GOOGLE_SERVICES_JSON != '' }}
+        run: echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 --decode > android/app/google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+
+      - name: Create key.properties
+        # Use the env context to check if the secret exists
+        if: ${{ env.KEYSTORE_CONTENTS != '' }}
+        run: |
+          echo "storePassword=${{ secrets.STORE_PASSWORD }}" > android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/key.properties
+          echo "storeFile=key.jks" >> android/key.properties
+        env:
+          KEYSTORE_CONTENTS: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Decode Keystore
+        if: ${{ env.KEYSTORE_CONTENTS != '' }}
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/key.jks
+        env:
+          KEYSTORE_CONTENTS: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Build AAB
+        run: flutter build appbundle --release
+
+      - name: Prepare Files
+        run: |
+          TIMESTAMP=$(TZ='Asia/Kuala_Lumpur' date +'%Y%m%d%H%M')
+          mv build/app/outputs/flutter-apk/app-release.apk Odera_Main_${TIMESTAMP}.apk
+          mv build/app/outputs/bundle/release/app-release.aab Odera_Main_${TIMESTAMP}.aab
+          echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Odera_Main_${{ env.TIMESTAMP }}.apk
+            Odera_Main_${{ env.TIMESTAMP }}.aab
+          tag_name: v_main_${{ env.TIMESTAMP }}
+          name: Main Release ${{ env.TIMESTAMP }}
+          body: |
+            Automated build for Odera POS Flutter App.
+            
+            Timestamp: ${{ env.TIMESTAMP }}
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
