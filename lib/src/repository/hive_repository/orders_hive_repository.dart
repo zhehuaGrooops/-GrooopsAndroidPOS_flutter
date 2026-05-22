@@ -494,6 +494,218 @@ class OrdersHiveRepository extends OrdersRepository {
     }
   }
 
+  @override
+  Future<ApiResult<dynamic>> addProductsToOrder({
+    required int orderId,
+    required List<EnhancedProductOrder> newItems,
+  }) async {
+    try {
+      final box = await _box();
+
+      dynamic hiveKey;
+      Map<String, dynamic>? raw;
+      for (final entry in box.toMap().entries) {
+        final val = entry.value;
+        if (val is Map) {
+          final id = val['id'];
+          final meta = val['_meta'] as Map?;
+          final serverId = meta?['serverId'];
+          if (id == orderId || serverId == orderId) {
+            hiveKey = entry.key;
+            raw = Map<String, dynamic>.from(val);
+            break;
+          }
+        }
+      }
+      if (raw == null) return const ApiResult.failure(error: 'Order not found');
+
+      final order = OrderHiveModel.fromJson(raw);
+      final existing = List<EnhancedProductOrder>.from(order.body?.enhancedProducts ?? []);
+
+      for (final p in newItems) {
+        await productsRepository.deductProductStock(p.stockId, p.quantity);
+        if (p.addons != null) {
+          for (final a in p.addons!) {
+            if (a.countableId != null) {
+              await productsRepository.deductAddonStock(a.countableId!, a.quantity);
+            }
+          }
+        }
+      }
+
+      final allProducts = [...existing, ...newItems];
+      num newTotal = allProducts.fold<num>(0, (s, p) => s + p.finalPrice);
+      newTotal -= (order.body?.billDiscountAmount ?? 0);
+      newTotal += (order.body?.roundingAmount ?? 0);
+
+      final updatedBody = OrderBodyData(
+        id: order.body?.id,
+        note: order.body?.note,
+        userId: order.body?.userId,
+        deliveryFee: order.body?.deliveryFee,
+        currencyId: order.body?.currencyId,
+        tableId: order.body?.tableId,
+        rate: order.body?.rate,
+        deliveryType: order.body?.deliveryType ?? 'dine_in',
+        phone: order.body?.phone,
+        coupon: order.body?.coupon,
+        location: order.body?.location,
+        address: order.body?.address ?? AddressModel(),
+        deliveryDate: order.body?.deliveryDate ?? '',
+        deliveryTime: order.body?.deliveryTime ?? '',
+        bagData: order.body?.bagData ?? BagData(),
+        enhancedProducts: allProducts,
+        billDiscountAmount: order.body?.billDiscountAmount,
+        billDiscountType: order.body?.billDiscountType,
+        billDiscountPercent: order.body?.billDiscountPercent,
+        transactionId: order.body?.transactionId,
+        queueNo: order.body?.queueNo,
+        createdAt: order.body?.createdAt,
+        roundingAmount: order.body?.roundingAmount,
+        paidAmount: order.body?.paidAmount,
+        refundAmount: order.body?.refundAmount,
+      );
+
+      final serverId = order.meta?.serverId;
+      final newSyncStatus = serverId != null ? 'update_pending' : 'pending';
+
+      await box.put(
+        hiveKey,
+        OrderHiveModel(
+          id: order.id,
+          body: updatedBody,
+          paymentId: order.paymentId,
+          status: order.status,
+          detailStatus: order.detailStatus,
+          totalPrice: newTotal,
+          userSnapshot: order.userSnapshot,
+          shopSnapshot: order.shopSnapshot,
+          meta: OrderMeta(
+            syncStatus: newSyncStatus,
+            transactionStatus: order.meta?.transactionStatus,
+            updatedAt: DateTime.now().toIso8601String(),
+            serverId: serverId,
+          ),
+        ).toJson(),
+      );
+
+      if (newSyncStatus == 'update_pending' && await AppConnectivity.connectivity()) {
+        await SyncService().pushOrderUpdate(hiveKey);
+      }
+
+      return const ApiResult.success(data: null);
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
+    }
+  }
+
+  @override
+  Future<ApiResult<dynamic>> cancelOrderItem({
+    required int orderId,
+    required int stockId,
+  }) async {
+    try {
+      final box = await _box();
+
+      dynamic hiveKey;
+      Map<String, dynamic>? raw;
+      for (final entry in box.toMap().entries) {
+        final val = entry.value;
+        if (val is Map) {
+          final id = val['id'];
+          final meta = val['_meta'] as Map?;
+          final serverId = meta?['serverId'];
+          if (id == orderId || serverId == orderId) {
+            hiveKey = entry.key;
+            raw = Map<String, dynamic>.from(val);
+            break;
+          }
+        }
+      }
+      if (raw == null) return const ApiResult.failure(error: 'Order not found');
+
+      final order = OrderHiveModel.fromJson(raw);
+      final products = List<EnhancedProductOrder>.from(order.body?.enhancedProducts ?? []);
+
+      final cancelIndex = products.indexWhere((p) => p.stockId == stockId);
+      if (cancelIndex == -1) return const ApiResult.failure(error: 'Item not in order');
+
+      final canceled = products.removeAt(cancelIndex);
+
+      await productsRepository.addProductStock(canceled.stockId, canceled.quantity);
+      if (canceled.addons != null) {
+        for (final a in canceled.addons!) {
+          if (a.countableId != null) {
+            await productsRepository.addAddonStock(a.countableId!, a.quantity);
+          }
+        }
+      }
+
+      num newTotal = products.fold<num>(0, (s, p) => s + p.finalPrice);
+      newTotal -= (order.body?.billDiscountAmount ?? 0);
+      newTotal += (order.body?.roundingAmount ?? 0);
+
+      final updatedBody = OrderBodyData(
+        id: order.body?.id,
+        note: order.body?.note,
+        userId: order.body?.userId,
+        deliveryFee: order.body?.deliveryFee,
+        currencyId: order.body?.currencyId,
+        tableId: order.body?.tableId,
+        rate: order.body?.rate,
+        deliveryType: order.body?.deliveryType ?? 'dine_in',
+        phone: order.body?.phone,
+        coupon: order.body?.coupon,
+        location: order.body?.location,
+        address: order.body?.address ?? AddressModel(),
+        deliveryDate: order.body?.deliveryDate ?? '',
+        deliveryTime: order.body?.deliveryTime ?? '',
+        bagData: order.body?.bagData ?? BagData(),
+        enhancedProducts: products,
+        billDiscountAmount: order.body?.billDiscountAmount,
+        billDiscountType: order.body?.billDiscountType,
+        billDiscountPercent: order.body?.billDiscountPercent,
+        transactionId: order.body?.transactionId,
+        queueNo: order.body?.queueNo,
+        createdAt: order.body?.createdAt,
+        roundingAmount: order.body?.roundingAmount,
+        paidAmount: order.body?.paidAmount,
+        refundAmount: order.body?.refundAmount,
+      );
+
+      final serverId = order.meta?.serverId;
+      final newSyncStatus = serverId != null ? 'update_pending' : 'pending';
+
+      await box.put(
+        hiveKey,
+        OrderHiveModel(
+          id: order.id,
+          body: updatedBody,
+          paymentId: order.paymentId,
+          status: order.status,
+          detailStatus: order.detailStatus,
+          totalPrice: newTotal,
+          userSnapshot: order.userSnapshot,
+          shopSnapshot: order.shopSnapshot,
+          meta: OrderMeta(
+            syncStatus: newSyncStatus,
+            transactionStatus: order.meta?.transactionStatus,
+            updatedAt: DateTime.now().toIso8601String(),
+            serverId: serverId,
+          ),
+        ).toJson(),
+      );
+
+      if (newSyncStatus == 'update_pending' && await AppConnectivity.connectivity()) {
+        await SyncService().pushOrderUpdate(hiveKey);
+      }
+
+      return const ApiResult.success(data: null);
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
+    }
+  }
+
   String _statusText(OrderStatus status) {
     switch (status) {
       case OrderStatus.newOrder:

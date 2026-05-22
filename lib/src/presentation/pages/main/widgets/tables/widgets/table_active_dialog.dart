@@ -56,9 +56,10 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
       context: context,
       child: ManagerPinDialog(
         onVerified: () async {
-          final updated = List<Map<String, dynamic>>.from(_items)
-            ..removeAt(index);
-          await LocalStorage.setTableItems(tableId, updated);
+          final canceledItem = _items[index];
+          final stockId = canceledItem['stockId'] as int?;
+          final updated = List<Map<String, dynamic>>.from(_items)..removeAt(index);
+
           if (updated.isEmpty) {
             final orderId = tablesState.tableOrders[tableId];
             if (orderId != null) {
@@ -69,6 +70,13 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
             await LocalStorage.clearTableItems(tableId);
             return;
           }
+
+          final orderId = tablesState.tableOrders[tableId];
+          if (orderId != null && stockId != null) {
+            await ordersRepository.cancelOrderItem(orderId: orderId, stockId: stockId);
+          }
+          await LocalStorage.setTableItems(tableId, updated);
+
           if (!mounted) return;
           // ignore: use_build_context_synchronously
           AppHelpers.showAlertDialog(

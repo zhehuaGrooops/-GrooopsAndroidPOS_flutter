@@ -1,0 +1,208 @@
+import 'dart:async';
+
+import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
+import 'package:admin_desktop/src/core/db/hive_service.dart';
+import 'package:admin_desktop/src/core/handlers/handlers.dart';
+import 'package:admin_desktop/src/core/utils/utils.dart';
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+
+import 'sync_models.dart';
+
+class TableSyncHandler {
+  final HttpService _httpService;
+  final StreamSink<SyncProgress> _progressSink;
+
+  TableSyncHandler({
+    required HttpService httpService,
+    required StreamSink<SyncProgress> progressSink,
+  })  : _httpService = httpService,
+        _progressSink = progressSink;
+
+  Dio _getClient({required bool requireAuth}) =>
+      _httpService.client(requireAuth: requireAuth);
+
+  /// Pushes all pending table/section mutations to the server.
+  Future<bool> pushPendingTables() async {
+    try {
+      debugPrint('Pushing pending table changes to server...');
+      final box = await HiveService.openBox(HiveBoxes.tables);
+      final role = LocalStorage.getUser()?.role ?? '';
+      final client = _getClient(requireAuth: true);
+
+      final keys = List.from(box.keys);
+      int processed = 0;
+      final errors = <String>[];
+
+      for (final key in keys) {
+        final raw = box.get(key);
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw);
+        if (map['_meta']?['syncStatus'] != 'pending') continue;
+
+        final operation = map['_meta']?['operation'] as String?;
+        try {
+          if (map['type'] == 'table') {
+            if (operation == 'create') {
+              final body = Map<String, dynamic>.from(map)
+                ..remove('_meta')
+                ..remove('type');
+              final localId = map['id']?.toString() ?? '';
+              final res = await client.post(
+                '/api/v1/dashboard/$role/tables',
+                queryParameters: body,
+                options: Options(headers: {'X-Idempotency-Key': localId}),
+              );
+              final serverId = res.data['data']?['id'];
+              await box.delete(key);
+              if (serverId != null) {
+                final updated = Map<String, dynamic>.from(map);
+                updated['id'] = serverId;
+                updated['_meta'] = {
+                  'syncStatus': 'synced',
+                  'updatedAt': DateTime.now().toIso8601String(),
+                };
+                await box.put('table_$serverId', updated);
+              }
+            } else if (operation == 'delete') {
+              await client.delete(
+                '/api/v1/dashboard/$role/tables/delete',
+                queryParameters: {'ids[0]': map['id']},
+              );
+              await box.delete(key);
+            } else if (operation == 'update_position') {
+              await client.patch(
+                '/api/v1/dashboard/$role/tables/${map['id']}/position',
+                data: {
+                  'position_x': map['position_x'],
+                  'position_y': map['position_y'],
+                },
+              );
+              map['_meta'] = {
+                'syncStatus': 'synced',
+                'updatedAt': DateTime.now().toIso8601String(),
+              };
+              await box.put(key, map);
+            }
+          } else if (map['type'] == 'section' &&
+              operation == 'update_map_size') {
+            await client.patch(
+              '/api/v1/dashboard/$role/shop-sections/${map['id']}/map-size',
+              data: {
+                'map_width': map['map_width'],
+                'map_height': map['map_height'],
+              },
+            );
+            map['_meta'] = {
+              'syncStatus': 'synced',
+              'updatedAt': DateTime.now().toIso8601String(),
+            };
+            await box.put(key, map);
+          }
+          processed++;
+        } catch (e) {
+          // Leave as pending — SyncService 2-min timer will retry
+          debugPrint('==> TableSyncHandler.$operation failed for $key: $e');
+          errors.add('$operation/$key: ${e.toString()}');
+        }
+      }
+
+      _progressSink.add(SyncProgress(
+        phase: 'push',
+        entity: 'tables',
+        processed: processed,
+        total: keys.length,
+        errors: errors,
+      ));
+      debugPrint('Finished pushing table changes. processed=$processed');
+      return errors.isEmpty;
+    } catch (e, stackTrace) {
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'TableSyncHandler.pushPendingTables',
+      );
+      _progressSink.add(SyncProgress(
+        phase: 'push',
+        entity: 'tables',
+        processed: 0,
+        total: 0,
+        errors: [e.toString()],
+      ));
+      return false;
+    }
+  }
+
+  /// Pulls tables and sections from server into Hive, preserving pending local mutations.
+  Future<bool> pullTables() async {
+    try {
+      debugPrint('Pulling tables and sections from server...');
+      final client = _getClient(requireAuth: true);
+      final role = LocalStorage.getUser()?.role ?? '';
+      final lang = LocalStorage.getLanguage()?.locale ?? 'en';
+      final box = await HiveService.openBox(HiveBoxes.tables);
+
+      // Pull sections
+      final sectionsRes = await client.get(
+        '/api/v1/dashboard/$role/shop-sections',
+        queryParameters: {'perPage': 200, 'lang': lang},
+      );
+      final sections = sectionsRes.data['data']?['data'] as List? ?? [];
+      for (final s in sections) {
+        final map = Map<String, dynamic>.from(s as Map);
+        map['type'] = 'section';
+        final key = 'section_${map['id']}';
+        // Preserve locally-pending mutations
+        final existing = box.get(key);
+        if (existing is Map &&
+            existing['_meta']?['syncStatus'] == 'pending') {
+          continue;
+        }
+        await box.put(key, map);
+      }
+
+      // Pull tables
+      final tablesRes = await client.get(
+        '/api/v1/dashboard/$role/tables',
+        queryParameters: {'perPage': 200, 'lang': lang},
+      );
+      final tables = tablesRes.data['data']?['data'] as List? ?? [];
+      for (final t in tables) {
+        final map = Map<String, dynamic>.from(t as Map);
+        map['type'] = 'table';
+        final key = 'table_${map['id']}';
+        final existing = box.get(key);
+        if (existing is Map &&
+            existing['_meta']?['syncStatus'] == 'pending') {
+          continue;
+        }
+        await box.put(key, map);
+      }
+
+      _progressSink.add(SyncProgress(
+        phase: 'pull',
+        entity: 'tables',
+        processed: sections.length + tables.length,
+        total: sections.length + tables.length,
+        errors: const [],
+      ));
+      debugPrint(
+          'Finished pulling tables. sections=${sections.length} tables=${tables.length}');
+      return true;
+    } catch (e, stackTrace) {
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'TableSyncHandler.pullTables',
+      );
+      _progressSink.add(SyncProgress(
+        phase: 'pull',
+        entity: 'tables',
+        processed: 0,
+        total: 0,
+        errors: [e.toString()],
+      ));
+      return false;
+    }
+  }
+}

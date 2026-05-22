@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../../../core/constants/constants.dart';
 import '../../../../../../core/utils/utils.dart';
+import '../../../../../../core/sync/sync_service.dart';
 import '../../../../../../models/models.dart';
 import 'right_side_provider.dart';
 import 'right_side_state.dart';
@@ -760,14 +761,93 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
     return orderId;
   }
 
-  /// Appends new items to existing dine-in table session in LocalStorage.
-  /// Items will be included in the cashout order at payment time.
   Future<int?> reorderDineInOrder({
     required int orderId,
     required List<Map<String, dynamic>> items,
     required BuildContext context,
   }) async {
+    final newProducts = items.map((item) {
+      final addonsList = List<Map<String, dynamic>>.from(item['addons'] as List? ?? []);
+      final num preTax = item['totalPrice'] as num;
+      final num taxAmt = (item['taxAmount'] as num?) ?? 0;
+      final num scAmt = (item['serviceChargeAmount'] as num?) ?? 0;
+      final num? taxPct = item['taxPercent'] as num?;
+      final num? scPct = item['serviceChargePercent'] as num?;
+      final String? scType = item['serviceChargeType'] as String?;
+      return EnhancedProductOrder(
+        stockId: (item['stockId'] as num).toInt(),
+        countableId: item['countableId'] as int?,
+        quantity: (item['quantity'] as num).toInt(),
+        originalPrice: preTax,
+        finalPrice: preTax + taxAmt + scAmt,
+        itemDiscountAmount: 0,
+        serviceChargeAmount: scAmt,
+        serviceChargeType: (scType?.isNotEmpty ?? false) ? scType : null,
+        serviceChargePercent: (scPct ?? 0) > 0 ? scPct : null,
+        taxAmount: taxAmt,
+        taxPercent: (taxPct ?? 0) > 0 ? taxPct : null,
+        categoryId: item['categoryId'] as int?,
+        categoryName: item['categoryName'] as String?,
+        addons: addonsList
+            .map((a) => EnhancedAddonOrder(
+                  stockId: (a['stockId'] as num).toInt(),
+                  countableId: a['countableId'] as int?,
+                  quantity: (a['quantity'] as num).toInt(),
+                  price: a['price'] as num,
+                ))
+            .toList(),
+      );
+    }).toList();
+
+    await ordersRepository.addProductsToOrder(orderId: orderId, newItems: newProducts);
     return orderId;
+  }
+
+  Future<void> cashoutTableOrder({
+    required BuildContext context,
+    required int orderId,
+    required int paymentId,
+    required Function(int effectiveId) onSuccess,
+  }) async {
+    state = state.copyWith(isOrderLoading: true);
+    try {
+      int? serverId;
+      final orderResult = await ordersRepository.fetchOrderById(orderId);
+      orderResult.when(
+        success: (order) => serverId = order.meta?.serverId,
+        failure: (_, __) {},
+      );
+
+      if (serverId == null && await AppConnectivity.connectivity()) {
+        await SyncService().pushSingleOrder(orderId);
+        final updated = await ordersRepository.fetchOrderById(orderId);
+        updated.when(
+          success: (order) => serverId = order.meta?.serverId,
+          failure: (_, __) {},
+        );
+      }
+
+      final effectiveId = serverId ?? orderId;
+
+      await paymentsRepository.createTransaction(
+        orderId: effectiveId,
+        paymentId: paymentId,
+      );
+
+      if (serverId != null && await AppConnectivity.connectivity()) {
+        await SyncService().submitPaymentTransaction(serverId!, hiveKey: orderId);
+        await SyncService().updateOrderStatusOnBackend(serverId!, 'delivered');
+      }
+
+      if (context.mounted) removeOrderedBag(context);
+      state = state.copyWith(isOrderLoading: false);
+      onSuccess(effectiveId);
+    } catch (e) {
+      state = state.copyWith(isOrderLoading: false);
+      if (context.mounted) {
+        AppHelpers.showSnackBar(context, e.toString());
+      }
+    }
   }
 
   /// Prints kitchen slip for reorder. No-op if printer not configured.

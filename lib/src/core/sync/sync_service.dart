@@ -20,6 +20,7 @@ import 'faqs_sync_handler.dart';
 import 'product_sync_handler.dart';
 import 'categories_sync_handler.dart';
 import 'discount_setting_sync_handler.dart';
+import 'table_sync_handler.dart';
 
 class SyncService {
   static final SyncService _instance = SyncService._internal();
@@ -35,6 +36,7 @@ class SyncService {
   late ProductSyncHandler _productSyncHandler;
   late CategoriesSyncHandler _categoriesSyncHandler;
   late DiscountSettingSyncHandler _discountSettingSyncHandler;
+  late TableSyncHandler _tableSyncHandler;
 
   SyncService._internal() {
     _orderSyncHandler = OrderSyncHandler(
@@ -62,6 +64,10 @@ class SyncService {
       progressSink: _progress.sink,
     );
     _discountSettingSyncHandler = DiscountSettingSyncHandler(
+      httpService: HttpService(),
+      progressSink: _progress.sink,
+    );
+    _tableSyncHandler = TableSyncHandler(
       httpService: HttpService(),
       progressSink: _progress.sink,
     );
@@ -106,18 +112,28 @@ class SyncService {
       httpService: service,
       progressSink: _progress.sink,
     );
+    _tableSyncHandler = TableSyncHandler(
+      httpService: service,
+      progressSink: _progress.sink,
+    );
   }
 
   Dio _getClient({required bool requireAuth}) {
     return (_mockHttpService ?? HttpService()).client(requireAuth: requireAuth);
   }
 
-  /// Pushes pending orders to the server.
   Future<bool> pushOrders() async {
     final ok = await _orderSyncHandler.pushOrders();
     await _orderSyncHandler.pushTransactions();
     return ok;
   }
+
+  Future<bool> pushOrderUpdates() => _orderSyncHandler.pushPendingOrderUpdates();
+
+  Future<bool> pushOrderUpdate(dynamic key) => _orderSyncHandler.pushOrderUpdate(key);
+
+  Future<bool> updateOrderStatusOnBackend(int serverId, String status) =>
+      _orderSyncHandler.updateOrderStatus(serverId, status);
 
   /// Pushes all pending transactions for synced orders to the server.
   Future<bool> pushTransactions() => _orderSyncHandler.pushTransactions();
@@ -135,6 +151,9 @@ class SyncService {
 
   /// Fetches FAQs from the server.
   Future<bool> fetchFaqs() => _faqsSyncHandler.fetchFaqs();
+
+  /// Pushes pending table/section mutations to the server.
+  Future<bool> pushTableChanges() => _tableSyncHandler.pushPendingTables();
 
   Future<bool> _isReachable() async {
     try {
@@ -295,6 +314,8 @@ class SyncService {
       final okOpenSession =
           await _withRetry(() => _cashSessionSyncHandler.pushOpenSessions());
       if (!okOpenSession) errors.add('open_sessions');
+      final ok6d = await _withRetry(() => _orderSyncHandler.pushPendingOrderUpdates());
+      if (!ok6d) errors.add('order_updates');
       final ok7 = await _withRetry(() => _orderSyncHandler.pushOrders());
       if (!ok7) errors.add('orders');
       final ok7b = await _withRetry(() => _orderSyncHandler.pushVoidedOrders());
@@ -310,6 +331,10 @@ class SyncService {
       final ok9 = await _withRetry(
           () => _discountSettingSyncHandler.pullDiscountSettings());
       if (!ok9) errors.add('discount_settings');
+      final ok10 = await _withRetry(() => _tableSyncHandler.pushPendingTables());
+      if (!ok10) errors.add('table_push');
+      final ok11 = await _withRetry(() => _tableSyncHandler.pullTables());
+      if (!ok11) errors.add('table_pull');
       _progress.add(SyncProgress(
           phase: 'complete',
           entity: 'all',

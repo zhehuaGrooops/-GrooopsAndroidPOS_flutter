@@ -1,5 +1,6 @@
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/handlers/handlers.dart';
+import 'package:admin_desktop/src/core/utils/app_connectivity.dart';
 import 'package:admin_desktop/src/models/data/table_data.dart';
 import 'package:admin_desktop/src/models/response/table_response.dart';
 import 'package:admin_desktop/src/models/response/table_bookings_response.dart';
@@ -13,6 +14,7 @@ import 'package:hive/hive.dart';
 
 import '../../core/db/hive_service.dart';
 import '../../core/handlers/api_result.dart';
+import '../../core/sync/sync_service.dart';
 import '../../models/models.dart';
 import '../table_repository.dart';
 
@@ -24,12 +26,14 @@ class TableHiveRepository extends TableRepository {
       {required String name, required num area}) async {
     try {
       final box = await _box();
+      final localId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final map = {
         'type': 'section',
+        'id': localId,
         'area': area.toString(),
         'translation': {'title': name}
       };
-      await box.add(map);
+      await box.put('section_$localId', map);
       return ApiResult.success(data: ShopSection.fromJson(map));
     } catch (e) {
       return ApiResult.failure(error: e.toString());
@@ -57,7 +61,21 @@ class TableHiveRepository extends TableRepository {
       {required TableModel tableModel}) async {
     try {
       final box = await _box();
-      await box.add({'type': 'table', ...tableModel.toJson()});
+      final localId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final map = <String, dynamic>{
+        'type': 'table',
+        'id': localId,
+        ...tableModel.toJson(),
+        '_meta': {
+          'syncStatus': 'pending',
+          'operation': 'create',
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+      };
+      await box.put('table_$localId', map);
+      if (await AppConnectivity.connectivity()) {
+        await SyncService().pushTableChanges();
+      }
       return const ApiResult.success(data: null);
     } catch (e) {
       return ApiResult.failure(error: e.toString());
@@ -77,6 +95,7 @@ class TableHiveRepository extends TableRepository {
       final list = box.values
           .whereType<Map>()
           .where((e) => e['type'] == 'table')
+          .where((e) => e['_meta']?['operation'] != 'delete')
           .map((e) => TableData.fromJson(Map<String, dynamic>.from(e)))
           .toList();
       return ApiResult.success(
@@ -140,7 +159,20 @@ class TableHiveRepository extends TableRepository {
   Future<ApiResult<TableResponse>> deleteTable(int id) async {
     try {
       final box = await _box();
-      await box.delete(id);
+      final key = 'table_$id';
+      final existing = box.get(key);
+      if (existing is Map) {
+        final map = Map<String, dynamic>.from(existing);
+        map['_meta'] = {
+          'syncStatus': 'pending',
+          'operation': 'delete',
+          'updatedAt': DateTime.now().toIso8601String(),
+        };
+        await box.put(key, map);
+      }
+      if (await AppConnectivity.connectivity()) {
+        await SyncService().pushTableChanges();
+      }
       return ApiResult.success(
           data: TableResponse(
               timestamp: DateTime.now().toIso8601String(),
@@ -221,20 +253,23 @@ class TableHiveRepository extends TableRepository {
       int id, double normX, double normY) async {
     try {
       final box = await _box();
-      for (final key in box.keys) {
-        final raw = box.get(key);
-        if (raw is! Map) continue;
-        final map = Map<String, dynamic>.from(raw);
-        if (map['type'] == 'table' && map['id'] == id) {
-          map['position_x'] = normX;
-          map['position_y'] = normY;
-          await box.put(key, map);
-          return ApiResult.success(data: TableData.fromJson(map));
-        }
+      final key = 'table_$id';
+      final raw = box.get(key);
+      final map = raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{'type': 'table', 'id': id};
+      map['position_x'] = normX;
+      map['position_y'] = normY;
+      map['_meta'] = {
+        'syncStatus': 'pending',
+        'operation': 'update_position',
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+      await box.put(key, map);
+      if (await AppConnectivity.connectivity()) {
+        await SyncService().pushTableChanges();
       }
-      return ApiResult.success(
-          data: TableData.fromJson(
-              {'id': id, 'position_x': normX, 'position_y': normY}));
+      return ApiResult.success(data: TableData.fromJson(map));
     } catch (e) {
       return ApiResult.failure(error: e.toString());
     }
@@ -245,20 +280,23 @@ class TableHiveRepository extends TableRepository {
       int id, int width, int height) async {
     try {
       final box = await _box();
-      for (final key in box.keys) {
-        final raw = box.get(key);
-        if (raw is! Map) continue;
-        final map = Map<String, dynamic>.from(raw);
-        if (map['type'] == 'section' && map['id'] == id) {
-          map['map_width'] = width;
-          map['map_height'] = height;
-          await box.put(key, map);
-          return ApiResult.success(data: ShopSection.fromJson(map));
-        }
+      final key = 'section_$id';
+      final raw = box.get(key);
+      final map = raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{'type': 'section', 'id': id};
+      map['map_width'] = width;
+      map['map_height'] = height;
+      map['_meta'] = {
+        'syncStatus': 'pending',
+        'operation': 'update_map_size',
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+      await box.put(key, map);
+      if (await AppConnectivity.connectivity()) {
+        await SyncService().pushTableChanges();
       }
-      return ApiResult.success(
-          data: ShopSection.fromJson(
-              {'id': id, 'map_width': width, 'map_height': height}));
+      return ApiResult.success(data: ShopSection.fromJson(map));
     } catch (e) {
       return ApiResult.failure(error: e.toString());
     }

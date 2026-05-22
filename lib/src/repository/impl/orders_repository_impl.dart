@@ -415,12 +415,25 @@ class OrdersRepositoryImpl extends OrdersRepository {
 
   @override
   Future<ApiResult<OrderHiveModel>> fetchOrderById(int orderId) async {
-    // Note: The Hive-specific implementation is exclusively in OrdersHiveRepository.
-    // This method is implemented here to satisfy the OrdersRepository interface.
     return ApiResult.failure(
-      error:
-          'fetchOrderById is only supported in Hive repository implementation.',
+      error: 'fetchOrderById is only supported in Hive repository implementation.',
     );
+  }
+
+  @override
+  Future<ApiResult<dynamic>> addProductsToOrder({
+    required int orderId,
+    required List<EnhancedProductOrder> newItems,
+  }) async {
+    return const ApiResult.success(data: null);
+  }
+
+  @override
+  Future<ApiResult<dynamic>> cancelOrderItem({
+    required int orderId,
+    required int stockId,
+  }) async {
+    return const ApiResult.success(data: null);
   }
 
   /// Validates the order data returned from fetchOrderById and handles null cases.

@@ -608,6 +608,55 @@ class PriceInfo extends StatelessWidget {
                             await LocalStorage.setQueueState(counter, today);
 
                             if (!context.mounted) return;
+
+                            // TABLE CASHOUT: reuse existing order, skip createOrder
+                            final cashoutTableId = LocalStorage.getCashoutTableId();
+                            if (cashoutTableId != null) {
+                              final tablesState = ref.read(tablesProvider);
+                              final existingOrderId = tablesState.tableOrders[cashoutTableId];
+                              if (existingOrderId == null) {
+                                AppHelpers.showSnackBar(context, 'No active order for this table');
+                                return;
+                              }
+                              await notifier.cashoutTableOrder(
+                                context: context,
+                                orderId: existingOrderId,
+                                paymentId: bag.selectedPayment?.id ?? 1,
+                                onSuccess: (effectiveId) async {
+                                  ref.read(newOrdersProvider.notifier).fetchNewOrders(isRefresh: true);
+                                  ref.read(acceptedOrdersProvider.notifier).fetchAcceptedOrders(isRefresh: true);
+                                  if (context.mounted && state.paginateResponse != null) {
+                                    showDialog(
+                                      context: context,
+                                      builder: (ctx) => Dialog(
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(12.r),
+                                        ),
+                                        child: SizedBox(
+                                          width: 380.w,
+                                          child: GenerateReceiptPage(
+                                            orderId: effectiveId.toString(),
+                                            isKitchen: true,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                    await OpenDrawerDialog.openDrawer(context);
+                                  }
+                                  notifier.clearCalculate();
+                                  mainNotifier.setPriceDate(null);
+                                  notifier.removeSelectedTable();
+                                  final tablesNotifier = ref.read(tablesProvider.notifier);
+                                  tablesNotifier.clearTableTimer(cashoutTableId);
+                                  tablesNotifier.clearTableOrder(cashoutTableId);
+                                  await LocalStorage.clearTableItems(cashoutTableId);
+                                  await LocalStorage.setCashoutTableId(null);
+                                  tablesNotifier.exitTableOrdering();
+                                },
+                              );
+                              return;
+                            }
+
                             notifier.createOrder(
                                 context,
                                 OrderBodyData(

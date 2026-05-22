@@ -311,6 +311,101 @@ class OrderSyncHandler {
     }
   }
 
+  /// PUTs updated product list for an existing synced order.
+  Future<bool> pushOrderUpdate(dynamic key) async {
+    try {
+      final box = await HiveService.openBox(HiveBoxes.orders);
+      final e = box.get(key);
+      if (e == null || e is! Map) return false;
+
+      final map = Map<String, dynamic>.from(e);
+      final meta = map['_meta'] as Map?;
+      final serverId = meta?['serverId'];
+      if (serverId == null) return false;
+
+      final rawBody = Map<String, dynamic>.from((map['body'] ?? {}) as Map);
+      final orderBody = OrderBodyData.fromJson(rawBody);
+      final role = LocalStorage.getUser()?.role ?? '';
+      final client = _getClient(requireAuth: true);
+
+      await client.put(
+        '/api/v1/dashboard/$role/orders/$serverId',
+        data: orderBody.toJson(),
+      );
+
+      map['_meta'] = {
+        ...Map<String, dynamic>.from(meta ?? {}),
+        'syncStatus': 'synced',
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+      await box.put(key, map);
+      return true;
+    } catch (ex, stackTrace) {
+      debugPrint('Error pushing order update $key: $ex');
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: ex,
+        stackTrace: stackTrace,
+        context: 'OrderSyncHandler.pushOrderUpdate',
+      );
+      return false;
+    }
+  }
+
+  /// Scans orders with syncStatus == 'update_pending' and pushes each.
+  Future<bool> pushPendingOrderUpdates() async {
+    try {
+      final box = await HiveService.openBox(HiveBoxes.orders);
+      final pending = box.toMap().entries
+          .where((e) => e.value is Map && e.value['_meta']?['syncStatus'] == 'update_pending')
+          .toList();
+
+      int processed = 0;
+      final errors = <String>[];
+      for (final entry in pending) {
+        if (await pushOrderUpdate(entry.key)) {
+          processed++;
+        } else {
+          errors.add('update/${entry.key}');
+        }
+      }
+      _progressSink.add(SyncProgress(
+        phase: 'push',
+        entity: 'order_updates',
+        processed: processed,
+        total: pending.length,
+        errors: errors,
+      ));
+      return true;
+    } catch (e, stackTrace) {
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'OrderSyncHandler.pushPendingOrderUpdates',
+      );
+      return false;
+    }
+  }
+
+  /// Updates an existing order's status on the backend.
+  Future<bool> updateOrderStatus(int serverId, String status) async {
+    try {
+      final role = LocalStorage.getUser()?.role ?? '';
+      final client = _getClient(requireAuth: true);
+      await client.post(
+        '/api/v1/dashboard/$role/order/$serverId/status',
+        data: {'status': status},
+      );
+      return true;
+    } catch (e, stackTrace) {
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'OrderSyncHandler.updateOrderStatus',
+      );
+      return false;
+    }
+  }
+
   /// Pushes voided orders to the server.
   Future<bool> pushVoidedOrders() async {
     try {

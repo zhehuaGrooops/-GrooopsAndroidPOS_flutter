@@ -52,4 +52,14 @@ abstract class OrdersRepository {
   /// Returns an [ApiResult] containing the [OrderHiveModel] if found,
   /// or a failure if the order does not exist or an error occurs.
   Future<ApiResult<OrderHiveModel>> fetchOrderById(int orderId);
+
+  Future<ApiResult<dynamic>> addProductsToOrder({
+    required int orderId,
+    required List<EnhancedProductOrder> newItems,
+  });
+
+  Future<ApiResult<dynamic>> cancelOrderItem({
+    required int orderId,
+    required int stockId,
+  });
 }
