@@ -4,5 +4,5 @@ import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpo
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final tablesProvider = StateNotifierProvider<TablesNotifier, TablesState>(
-  (ref) => TablesNotifier(tableRepository),
+  (ref) => TablesNotifier(tableRepository, ordersRepository),
 );

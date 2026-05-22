@@ -8,6 +8,8 @@ class TableData {
   String? createdAt;
   String? updatedAt;
   ShopSection? shopSection;
+  double? positionX;
+  double? positionY;
 
   TableData(
       {this.id,
@@ -18,7 +20,9 @@ class TableData {
       this.active,
       this.createdAt,
       this.updatedAt,
-      this.shopSection});
+      this.shopSection,
+      this.positionX,
+      this.positionY});
 
   TableData.fromJson(Map<String, dynamic> json) {
     id = json['id'];
@@ -30,8 +34,10 @@ class TableData {
     createdAt = json['created_at'];
     updatedAt = json['updated_at'];
     shopSection = json['shop_section'] != null
-        ? ShopSection.fromJson(json['shop_section'])
+        ? ShopSection.fromJson(Map<String, dynamic>.from(json['shop_section']))
         : null;
+    positionX = (json['position_x'] as num?)?.toDouble();
+    positionY = (json['position_y'] as num?)?.toDouble();
   }
 
   Map<String, dynamic> toJson() {
@@ -47,6 +53,8 @@ class TableData {
     if (shopSection != null) {
       data['shop_section'] = shopSection!.toJson();
     }
+    data['position_x'] = positionX;
+    data['position_y'] = positionY;
     return data;
   }
 }
@@ -59,6 +67,8 @@ class ShopSection {
   String? createdAt;
   String? updatedAt;
   Translation? translation;
+  int? mapWidth;
+  int? mapHeight;
 
   ShopSection(
       {this.id,
@@ -67,7 +77,9 @@ class ShopSection {
       this.img,
       this.createdAt,
       this.updatedAt,
-      this.translation});
+      this.translation,
+      this.mapWidth,
+      this.mapHeight});
 
   ShopSection.fromJson(Map<String, dynamic> json) {
     id = json['id'];
@@ -77,8 +89,10 @@ class ShopSection {
     createdAt = json['created_at'];
     updatedAt = json['updated_at'];
     translation = json['translation'] != null
-        ? Translation.fromJson(json['translation'])
+        ? Translation.fromJson(Map<String, dynamic>.from(json['translation']))
         : null;
+    mapWidth = json['map_width'] as int?;
+    mapHeight = json['map_height'] as int?;
   }
 
   Map<String, dynamic> toJson() {
@@ -92,6 +106,8 @@ class ShopSection {
     if (translation != null) {
       data['translation'] = translation!.toJson();
     }
+    data['map_width'] = mapWidth;
+    data['map_height'] = mapHeight;
     return data;
   }
 }

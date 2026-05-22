@@ -44,6 +44,12 @@ class TablesState with _$TablesState {
     @Default([]) List<DateTime?> times,
     @Default(null) DateTime? start,
     @Default(null) DateTime? end,
+    @Default(<int, DateTime>{}) Map<int, DateTime> tableTimers,
+    @Default(<int, int>{}) Map<int, int> tableOrders,
+    @Default('NEW ORDER') String kitchenOrderLabel,
+    @Default(null) TableData? activeOrderTable,
+    @Default(false) bool isEditMode,
+    @Default(<int, Offset>{}) Map<int, Offset> tablePositions,
   }) = _TablesState;
 
   const TablesState._();
