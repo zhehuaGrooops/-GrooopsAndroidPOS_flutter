@@ -414,4 +414,50 @@ class TableRepositoryIml extends TableRepository {
       return ApiResult.failure(error: AppHelpers.errorHandler(e));
     }
   }
+
+  @override
+  Future<ApiResult<TableData>> updateTablePosition(
+      int id, double normX, double normY) async {
+    try {
+      final client = dioHttp.client(requireAuth: true);
+      final response = await client.patch(
+        '/api/v1/dashboard/${LocalStorage.getUser()?.role}/tables/$id/position',
+        data: {'position_x': normX, 'position_y': normY},
+      );
+      return ApiResult.success(
+          data: TableData.fromJson(
+              Map<String, dynamic>.from(response.data['data'])));
+    } catch (e, stackTrace) {
+      debugPrint('==> updateTablePosition failure: $e');
+      AppHelpers.recordErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'TableRepositoryIml.updateTablePosition',
+      );
+      return ApiResult.failure(error: AppHelpers.errorHandler(e));
+    }
+  }
+
+  @override
+  Future<ApiResult<ShopSection>> updateSectionMapSize(
+      int id, int width, int height) async {
+    try {
+      final client = dioHttp.client(requireAuth: true);
+      final response = await client.patch(
+        '/api/v1/dashboard/${LocalStorage.getUser()?.role}/shop-sections/$id/map-size',
+        data: {'map_width': width, 'map_height': height},
+      );
+      return ApiResult.success(
+          data: ShopSection.fromJson(
+              Map<String, dynamic>.from(response.data['data'])));
+    } catch (e, stackTrace) {
+      debugPrint('==> updateSectionMapSize failure: $e');
+      AppHelpers.recordErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'TableRepositoryIml.updateSectionMapSize',
+      );
+      return ApiResult.failure(error: AppHelpers.errorHandler(e));
+    }
+  }
 }

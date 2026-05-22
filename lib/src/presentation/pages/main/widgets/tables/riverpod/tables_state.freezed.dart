@@ -51,6 +51,12 @@ mixin _$TablesState {
   List<DateTime?> get times => throw _privateConstructorUsedError;
   DateTime? get start => throw _privateConstructorUsedError;
   DateTime? get end => throw _privateConstructorUsedError;
+  Map<int, DateTime> get tableTimers => throw _privateConstructorUsedError;
+  Map<int, int> get tableOrders => throw _privateConstructorUsedError;
+  String get kitchenOrderLabel => throw _privateConstructorUsedError;
+  TableData? get activeOrderTable => throw _privateConstructorUsedError;
+  bool get isEditMode => throw _privateConstructorUsedError;
+  Map<int, Offset> get tablePositions => throw _privateConstructorUsedError;
 
   /// Create a copy of TablesState
   /// with the given fields replaced by the non-null parameter values.
@@ -98,7 +104,13 @@ abstract class $TablesStateCopyWith<$Res> {
       List<BookingShopClosedDate?> closeDays,
       List<DateTime?> times,
       DateTime? start,
-      DateTime? end});
+      DateTime? end,
+      Map<int, DateTime> tableTimers,
+      Map<int, int> tableOrders,
+      String kitchenOrderLabel,
+      TableData? activeOrderTable,
+      bool isEditMode,
+      Map<int, Offset> tablePositions});
 }
 
 /// @nodoc
@@ -149,6 +161,12 @@ class _$TablesStateCopyWithImpl<$Res, $Val extends TablesState>
     Object? times = null,
     Object? start = freezed,
     Object? end = freezed,
+    Object? tableTimers = null,
+    Object? tableOrders = null,
+    Object? kitchenOrderLabel = null,
+    Object? activeOrderTable = freezed,
+    Object? isEditMode = null,
+    Object? tablePositions = null,
   }) {
     return _then(_value.copyWith(
       isLoading: null == isLoading
@@ -283,6 +301,30 @@ class _$TablesStateCopyWithImpl<$Res, $Val extends TablesState>
           ? _value.end
           : end // ignore: cast_nullable_to_non_nullable
               as DateTime?,
+      tableTimers: null == tableTimers
+          ? _value.tableTimers
+          : tableTimers // ignore: cast_nullable_to_non_nullable
+              as Map<int, DateTime>,
+      tableOrders: null == tableOrders
+          ? _value.tableOrders
+          : tableOrders // ignore: cast_nullable_to_non_nullable
+              as Map<int, int>,
+      kitchenOrderLabel: null == kitchenOrderLabel
+          ? _value.kitchenOrderLabel
+          : kitchenOrderLabel // ignore: cast_nullable_to_non_nullable
+              as String,
+      activeOrderTable: freezed == activeOrderTable
+          ? _value.activeOrderTable
+          : activeOrderTable // ignore: cast_nullable_to_non_nullable
+              as TableData?,
+      isEditMode: null == isEditMode
+          ? _value.isEditMode
+          : isEditMode // ignore: cast_nullable_to_non_nullable
+              as bool,
+      tablePositions: null == tablePositions
+          ? _value.tablePositions
+          : tablePositions // ignore: cast_nullable_to_non_nullable
+              as Map<int, Offset>,
     ) as $Val);
   }
 }
@@ -328,7 +370,13 @@ abstract class _$$TablesStateImplCopyWith<$Res>
       List<BookingShopClosedDate?> closeDays,
       List<DateTime?> times,
       DateTime? start,
-      DateTime? end});
+      DateTime? end,
+      Map<int, DateTime> tableTimers,
+      Map<int, int> tableOrders,
+      String kitchenOrderLabel,
+      TableData? activeOrderTable,
+      bool isEditMode,
+      Map<int, Offset> tablePositions});
 }
 
 /// @nodoc
@@ -377,6 +425,12 @@ class __$$TablesStateImplCopyWithImpl<$Res>
     Object? times = null,
     Object? start = freezed,
     Object? end = freezed,
+    Object? tableTimers = null,
+    Object? tableOrders = null,
+    Object? kitchenOrderLabel = null,
+    Object? activeOrderTable = freezed,
+    Object? isEditMode = null,
+    Object? tablePositions = null,
   }) {
     return _then(_$TablesStateImpl(
       isLoading: null == isLoading
@@ -511,6 +565,30 @@ class __$$TablesStateImplCopyWithImpl<$Res>
           ? _value.end
           : end // ignore: cast_nullable_to_non_nullable
               as DateTime?,
+      tableTimers: null == tableTimers
+          ? _value._tableTimers
+          : tableTimers // ignore: cast_nullable_to_non_nullable
+              as Map<int, DateTime>,
+      tableOrders: null == tableOrders
+          ? _value._tableOrders
+          : tableOrders // ignore: cast_nullable_to_non_nullable
+              as Map<int, int>,
+      kitchenOrderLabel: null == kitchenOrderLabel
+          ? _value.kitchenOrderLabel
+          : kitchenOrderLabel // ignore: cast_nullable_to_non_nullable
+              as String,
+      activeOrderTable: freezed == activeOrderTable
+          ? _value.activeOrderTable
+          : activeOrderTable // ignore: cast_nullable_to_non_nullable
+              as TableData?,
+      isEditMode: null == isEditMode
+          ? _value.isEditMode
+          : isEditMode // ignore: cast_nullable_to_non_nullable
+              as bool,
+      tablePositions: null == tablePositions
+          ? _value._tablePositions
+          : tablePositions // ignore: cast_nullable_to_non_nullable
+              as Map<int, Offset>,
     ));
   }
 }
@@ -551,7 +629,13 @@ class _$TablesStateImpl extends _TablesState {
       final List<BookingShopClosedDate?> closeDays = const [],
       final List<DateTime?> times = const [],
       this.start = null,
-      this.end = null})
+      this.end = null,
+      final Map<int, DateTime> tableTimers = const <int, DateTime>{},
+      final Map<int, int> tableOrders = const <int, int>{},
+      this.kitchenOrderLabel = 'NEW ORDER',
+      this.activeOrderTable = null,
+      this.isEditMode = false,
+      final Map<int, Offset> tablePositions = const <int, Offset>{}})
       : _tableListData = tableListData,
         _tableBookingData = tableBookingData,
         _sectionListTitle = sectionListTitle,
@@ -559,6 +643,9 @@ class _$TablesStateImpl extends _TablesState {
         _disableDates = disableDates,
         _closeDays = closeDays,
         _times = times,
+        _tableTimers = tableTimers,
+        _tableOrders = tableOrders,
+        _tablePositions = tablePositions,
         super._();
 
   @override
@@ -704,10 +791,45 @@ class _$TablesStateImpl extends _TablesState {
   @override
   @JsonKey()
   final DateTime? end;
+  final Map<int, DateTime> _tableTimers;
+  @override
+  @JsonKey()
+  Map<int, DateTime> get tableTimers {
+    if (_tableTimers is EqualUnmodifiableMapView) return _tableTimers;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_tableTimers);
+  }
+
+  final Map<int, int> _tableOrders;
+  @override
+  @JsonKey()
+  Map<int, int> get tableOrders {
+    if (_tableOrders is EqualUnmodifiableMapView) return _tableOrders;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_tableOrders);
+  }
+
+  @override
+  @JsonKey()
+  final String kitchenOrderLabel;
+  @override
+  @JsonKey()
+  final TableData? activeOrderTable;
+  @override
+  @JsonKey()
+  final bool isEditMode;
+  final Map<int, Offset> _tablePositions;
+  @override
+  @JsonKey()
+  Map<int, Offset> get tablePositions {
+    if (_tablePositions is EqualUnmodifiableMapView) return _tablePositions;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_tablePositions);
+  }
 
   @override
   String toString() {
-    return 'TablesState(isLoading: $isLoading, isInfoLoading: $isInfoLoading, isBookingLoading: $isBookingLoading, isSectionLoading: $isSectionLoading, isStatisticLoading: $isStatisticLoading, hasMore: $hasMore, hasMoreSections: $hasMoreSections, hasMoreBookings: $hasMoreBookings, showFilter: $showFilter, isListView: $isListView, selectTabIndex: $selectTabIndex, selectListTabIndex: $selectListTabIndex, selectSection: $selectSection, selectAddSection: $selectAddSection, selectTableId: $selectTableId, selectOrderIndex: $selectOrderIndex, tableListData: $tableListData, tableBookingData: $tableBookingData, sectionListTitle: $sectionListTitle, shopSectionList: $shopSectionList, disableDates: $disableDates, tableStatistic: $tableStatistic, workingDayData: $workingDayData, bookingsData: $bookingsData, selectDateTime: $selectDateTime, selectTimeOfDay: $selectTimeOfDay, selectDuration: $selectDuration, errorSelectDate: $errorSelectDate, errorSelectTime: $errorSelectTime, closeDays: $closeDays, times: $times, start: $start, end: $end)';
+    return 'TablesState(isLoading: $isLoading, isInfoLoading: $isInfoLoading, isBookingLoading: $isBookingLoading, isSectionLoading: $isSectionLoading, isStatisticLoading: $isStatisticLoading, hasMore: $hasMore, hasMoreSections: $hasMoreSections, hasMoreBookings: $hasMoreBookings, showFilter: $showFilter, isListView: $isListView, selectTabIndex: $selectTabIndex, selectListTabIndex: $selectListTabIndex, selectSection: $selectSection, selectAddSection: $selectAddSection, selectTableId: $selectTableId, selectOrderIndex: $selectOrderIndex, tableListData: $tableListData, tableBookingData: $tableBookingData, sectionListTitle: $sectionListTitle, shopSectionList: $shopSectionList, disableDates: $disableDates, tableStatistic: $tableStatistic, workingDayData: $workingDayData, bookingsData: $bookingsData, selectDateTime: $selectDateTime, selectTimeOfDay: $selectTimeOfDay, selectDuration: $selectDuration, errorSelectDate: $errorSelectDate, errorSelectTime: $errorSelectTime, closeDays: $closeDays, times: $times, start: $start, end: $end, tableTimers: $tableTimers, tableOrders: $tableOrders, kitchenOrderLabel: $kitchenOrderLabel, activeOrderTable: $activeOrderTable, isEditMode: $isEditMode, tablePositions: $tablePositions)';
   }
 
   @override
@@ -776,7 +898,19 @@ class _$TablesStateImpl extends _TablesState {
                 .equals(other._closeDays, _closeDays) &&
             const DeepCollectionEquality().equals(other._times, _times) &&
             (identical(other.start, start) || other.start == start) &&
-            (identical(other.end, end) || other.end == end));
+            (identical(other.end, end) || other.end == end) &&
+            const DeepCollectionEquality()
+                .equals(other._tableTimers, _tableTimers) &&
+            const DeepCollectionEquality()
+                .equals(other._tableOrders, _tableOrders) &&
+            (identical(other.kitchenOrderLabel, kitchenOrderLabel) ||
+                other.kitchenOrderLabel == kitchenOrderLabel) &&
+            (identical(other.activeOrderTable, activeOrderTable) ||
+                other.activeOrderTable == activeOrderTable) &&
+            (identical(other.isEditMode, isEditMode) ||
+                other.isEditMode == isEditMode) &&
+            const DeepCollectionEquality()
+                .equals(other._tablePositions, _tablePositions));
   }
 
   @override
@@ -814,7 +948,13 @@ class _$TablesStateImpl extends _TablesState {
         const DeepCollectionEquality().hash(_closeDays),
         const DeepCollectionEquality().hash(_times),
         start,
-        end
+        end,
+        const DeepCollectionEquality().hash(_tableTimers),
+        const DeepCollectionEquality().hash(_tableOrders),
+        kitchenOrderLabel,
+        activeOrderTable,
+        isEditMode,
+        const DeepCollectionEquality().hash(_tablePositions)
       ]);
 
   /// Create a copy of TablesState
@@ -860,7 +1000,13 @@ abstract class _TablesState extends TablesState {
       final List<BookingShopClosedDate?> closeDays,
       final List<DateTime?> times,
       final DateTime? start,
-      final DateTime? end}) = _$TablesStateImpl;
+      final DateTime? end,
+      final Map<int, DateTime> tableTimers,
+      final Map<int, int> tableOrders,
+      final String kitchenOrderLabel,
+      final TableData? activeOrderTable,
+      final bool isEditMode,
+      final Map<int, Offset> tablePositions}) = _$TablesStateImpl;
   const _TablesState._() : super._();
 
   @override
@@ -929,6 +1075,18 @@ abstract class _TablesState extends TablesState {
   DateTime? get start;
   @override
   DateTime? get end;
+  @override
+  Map<int, DateTime> get tableTimers;
+  @override
+  Map<int, int> get tableOrders;
+  @override
+  String get kitchenOrderLabel;
+  @override
+  TableData? get activeOrderTable;
+  @override
+  bool get isEditMode;
+  @override
+  Map<int, Offset> get tablePositions;
 
   /// Create a copy of TablesState
   /// with the given fields replaced by the non-null parameter values.
