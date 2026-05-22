@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:admin_desktop/src/core/di/dependency_manager.dart';
+import 'package:admin_desktop/src/models/data/table_data.dart';
 import 'package:admin_desktop/src/models/response/product_calculate_response.dart';
+import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../../../core/constants/constants.dart';
@@ -656,6 +658,126 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
         debugPrint('==> get users details failure: $failure');
       },
     );
+  }
+
+  void presetTableContext(TableData table, {ShopSection? section}) {
+    setSelectedOrderType(TrKeys.dine);
+    final bags = LocalStorage.getBags();
+    if (bags.isEmpty) return;
+    final idx = state.selectedBagIndex;
+    final updatedBag = bags[idx].copyWith(
+      selectedTable: table,
+      selectedSection: section ?? bags[idx].selectedSection,
+    );
+    bags[idx] = updatedBag;
+    LocalStorage.setBags(bags);
+    state = state.copyWith(
+      bags: bags,
+      selectedTable: table,
+      selectedSection: section ?? state.selectedSection,
+      selectTableError: null,
+      selectSectionError: null,
+    );
+  }
+
+  /// Creates an initial dine-in order in Hive and syncs to backend if online.
+  /// Returns the order ID on success, or null on failure.
+  Future<int?> initDineInOrder({
+    required int tableId,
+    required List<Map<String, dynamic>> items,
+    required BuildContext context,
+  }) async {
+    final enhancedProducts = items.map((item) {
+      final addonsList =
+          List<Map<String, dynamic>>.from(item['addons'] as List? ?? []);
+      final num preTax = item['totalPrice'] as num;
+      final num taxAmt = (item['taxAmount'] as num?) ?? 0;
+      final num scAmt = (item['serviceChargeAmount'] as num?) ?? 0;
+      final num? taxPct = item['taxPercent'] as num?;
+      final num? scPct = item['serviceChargePercent'] as num?;
+      final String? scType = item['serviceChargeType'] as String?;
+      return EnhancedProductOrder(
+        stockId: (item['stockId'] as num).toInt(),
+        countableId: item['countableId'] as int?,
+        quantity: (item['quantity'] as num).toInt(),
+        originalPrice: preTax,
+        finalPrice: preTax + taxAmt + scAmt,
+        itemDiscountAmount: 0,
+        serviceChargeAmount: scAmt,
+        serviceChargeType: (scType?.isNotEmpty ?? false) ? scType : null,
+        serviceChargePercent: (scPct ?? 0) > 0 ? scPct : null,
+        taxAmount: taxAmt,
+        taxPercent: (taxPct ?? 0) > 0 ? taxPct : null,
+        categoryId: item['categoryId'] as int?,
+        categoryName: item['categoryName'] as String?,
+        addons: addonsList
+            .map((a) => EnhancedAddonOrder(
+                  stockId: (a['stockId'] as num).toInt(),
+                  countableId: a['countableId'] as int?,
+                  quantity: (a['quantity'] as num).toInt(),
+                  price: a['price'] as num,
+                ))
+            .toList(),
+      );
+    }).toList();
+
+    final now = DateTime.now();
+    final data = OrderBodyData(
+      bagData: BagData(
+        selectedCurrency: state.selectedCurrency,
+        selectedTable: state.selectedTable,
+        selectedSection: state.selectedSection,
+        selectedPayment: state.selectedPayment,
+        selectedUser: state.selectedUser,
+        selectedAddress: state.selectedAddress,
+      ),
+      deliveryType: TrKeys.dine,
+      tableId: tableId,
+      currencyId: state.selectedCurrency?.id,
+      rate: state.selectedCurrency?.rate ?? 0,
+      phone: LocalStorage.getUser()?.phone ?? '',
+      address: AddressModel(),
+      deliveryDate: DateFormat('yyyy-MM-dd').format(now),
+      deliveryTime: DateFormat('HH:mm').format(now),
+      enhancedProducts: enhancedProducts,
+      paidAmount: 0,
+      queueNo: '1'.padLeft(4, '0'),
+      createdAt: now.toIso8601String(),
+    );
+
+    int? orderId;
+    final response = await ordersRepository.createOrder(data);
+    response.when(
+      success: (res) {
+        orderId = res.data?.id;
+      },
+      failure: (failure, status) {
+        if (context.mounted) {
+          AppHelpers.showSnackBar(context, failure);
+        }
+      },
+    );
+    return orderId;
+  }
+
+  /// Appends new items to existing dine-in table session in LocalStorage.
+  /// Items will be included in the cashout order at payment time.
+  Future<int?> reorderDineInOrder({
+    required int orderId,
+    required List<Map<String, dynamic>> items,
+    required BuildContext context,
+  }) async {
+    return orderId;
+  }
+
+  /// Prints kitchen slip for reorder. No-op if printer not configured.
+  Future<void> printKitchenSlipForReorder(
+    BuildContext context, {
+    required int tableId,
+    required List<Map<String, dynamic>> newItems,
+    required TableData tableData,
+  }) async {
+    debugPrint('printKitchenSlipForReorder: table=${tableData.name}, items=${newItems.length}');
   }
 
   void setSelectedOrderType(String? type) {

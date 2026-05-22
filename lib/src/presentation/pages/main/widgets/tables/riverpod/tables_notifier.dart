@@ -10,15 +10,18 @@ import 'package:intl/intl.dart';
 import '../../../../../../core/utils/utils.dart';
 import '../../../../../../models/data/table_data.dart';
 import '../../../../../../models/models.dart';
+import '../../../../../../repository/orders_repository.dart';
 import '../../../../../../repository/table_repository.dart';
 import 'tables_state.dart';
 
 class TablesNotifier extends StateNotifier<TablesState> {
   final TableRepository tableRepository;
+  final OrdersRepository ordersRepository;
   int _sectionPage = 0;
   int _page = 0;
 
-  TablesNotifier(this.tableRepository) : super(const TablesState());
+  TablesNotifier(this.tableRepository, this.ordersRepository)
+      : super(const TablesState());
 
   initial() async {
     await fetchSectionList(isRefresh: true);
@@ -228,6 +231,140 @@ class TablesNotifier extends StateNotifier<TablesState> {
     }
   }
 
+  void startTableTimer(int tableId) {
+    final t = Map<int, DateTime>.from(state.tableTimers);
+    t[tableId] = DateTime.now();
+    state = state.copyWith(tableTimers: t);
+  }
+
+  void clearTableTimer(int tableId) {
+    final t = Map<int, DateTime>.from(state.tableTimers);
+    t.remove(tableId);
+    state = state.copyWith(tableTimers: t);
+  }
+
+  Future<void> loadTableStatuses() async {
+    final response =
+        await ordersRepository.getOrders(status: OrderStatus.newOrder);
+    response.when(
+      success: (data) {
+        final orders = data.data?.orders ?? [];
+        final ids = <int, int>{};
+        final timers = <int, DateTime>{};
+        for (final order in orders) {
+          final tableId = order.table?.id;
+          final orderId = order.id;
+          if (tableId != null && orderId != null) {
+            ids[tableId] = orderId;
+            timers[tableId] = order.createdAt != null
+                ? DateTime.tryParse(order.createdAt!) ?? DateTime.now()
+                : DateTime.now();
+          }
+        }
+        state = state.copyWith(tableOrders: ids, tableTimers: timers);
+      },
+      failure: (failure, status) {
+        debugPrint('==> loadTableStatuses failed: $failure');
+      },
+    );
+  }
+
+  void setTableOrder(int tableId, int orderId) {
+    final orders = Map<int, int>.from(state.tableOrders);
+    orders[tableId] = orderId;
+    final timers = Map<int, DateTime>.from(state.tableTimers);
+    timers.putIfAbsent(tableId, () => DateTime.now());
+    state = state.copyWith(tableOrders: orders, tableTimers: timers);
+  }
+
+  void clearTableOrder(int tableId) {
+    final orders = Map<int, int>.from(state.tableOrders);
+    orders.remove(tableId);
+    state = state.copyWith(tableOrders: orders);
+  }
+
+  void setKitchenLabel(String label) {
+    state = state.copyWith(kitchenOrderLabel: label);
+  }
+
+  void enterTableOrdering(TableData table) {
+    final tableId = table.id ?? 0;
+    final isReorder = state.tableTimers.containsKey(tableId);
+    setKitchenLabel(isReorder ? 'REORDER' : 'NEW ORDER');
+    LocalStorage.setActiveOrderingTableId(table.id);
+    state = state.copyWith(activeOrderTable: table);
+  }
+
+  void exitTableOrdering() {
+    LocalStorage.setActiveOrderingTableId(null);
+    state = state.copyWith(activeOrderTable: null);
+  }
+
+  void toggleEditMode() {
+    state = state.copyWith(isEditMode: !state.isEditMode);
+  }
+
+  Future<void> updateTablePosition(
+      int tableId, double normX, double normY) async {
+    final updated = Map<int, Offset>.from(state.tablePositions);
+    updated[tableId] = Offset(normX, normY);
+    state = state.copyWith(tablePositions: updated);
+
+    final result =
+        await tableRepository.updateTablePosition(tableId, normX, normY);
+    result.when(
+      success: (_) {},
+      failure: (error, _) {
+        final reverted = Map<int, Offset>.from(state.tablePositions);
+        reverted.remove(tableId);
+        state = state.copyWith(tablePositions: reverted);
+        debugPrint('==> updateTablePosition reverted: $error');
+      },
+    );
+  }
+
+  Future<void> updateMapSize(int sectionId, int width, int height) async {
+    final optimistic = state.shopSectionList.map((s) {
+      if (s?.id != sectionId) return s;
+      return ShopSection(
+        id: s!.id,
+        shopId: s.shopId,
+        area: s.area,
+        img: s.img,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        translation: s.translation,
+        mapWidth: width,
+        mapHeight: height,
+      );
+    }).toList();
+    state = state.copyWith(shopSectionList: optimistic);
+
+    final result =
+        await tableRepository.updateSectionMapSize(sectionId, width, height);
+    result.when(
+      success: (section) {
+        final confirmed = state.shopSectionList.map((s) {
+          if (s?.id != sectionId) return s;
+          return ShopSection(
+            id: s!.id,
+            shopId: s.shopId,
+            area: s.area,
+            img: s.img,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt,
+            translation: s.translation,
+            mapWidth: section.mapWidth ?? s.mapWidth,
+            mapHeight: section.mapHeight ?? s.mapHeight,
+          );
+        }).toList();
+        state = state.copyWith(shopSectionList: confirmed);
+      },
+      failure: (error, _) =>
+          debugPrint('==> updateMapSize failure: $error'),
+    );
+  }
+
   setSection({String? title, int? index}) {
     if (title != null) {
       for (int i = 0; i < state.shopSectionList.length; i++) {
@@ -339,9 +476,20 @@ class TablesNotifier extends StateNotifier<TablesState> {
         tableListData.addAll(newTables);
         state = state.copyWith(hasMore: newTables.length >= 10);
 
+        final positions = isRefresh
+            ? <int, Offset>{}
+            : Map<int, Offset>.from(state.tablePositions);
+        for (final t in newTables) {
+          final id = t.id;
+          if (id != null && t.positionX != null && t.positionY != null) {
+            positions[id] = Offset(t.positionX!, t.positionY!);
+          }
+        }
+
         state = state.copyWith(
           isLoading: false,
           tableListData: tableListData,
+          tablePositions: positions,
         );
         await getStatistic(start: start, end: end);
       },

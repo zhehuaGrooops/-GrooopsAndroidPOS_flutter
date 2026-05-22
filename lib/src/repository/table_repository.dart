@@ -70,4 +70,10 @@ abstract class TableRepository {
     DateTime? from,
     DateTime? to,
   });
+
+  Future<ApiResult<TableData>> updateTablePosition(
+      int id, double normX, double normY);
+
+  Future<ApiResult<ShopSection>> updateSectionMapSize(
+      int id, int width, int height);
 }

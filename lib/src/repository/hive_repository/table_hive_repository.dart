@@ -217,6 +217,54 @@ class TableHiveRepository extends TableRepository {
   }
 
   @override
+  Future<ApiResult<TableData>> updateTablePosition(
+      int id, double normX, double normY) async {
+    try {
+      final box = await _box();
+      for (final key in box.keys) {
+        final raw = box.get(key);
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw);
+        if (map['type'] == 'table' && map['id'] == id) {
+          map['position_x'] = normX;
+          map['position_y'] = normY;
+          await box.put(key, map);
+          return ApiResult.success(data: TableData.fromJson(map));
+        }
+      }
+      return ApiResult.success(
+          data: TableData.fromJson(
+              {'id': id, 'position_x': normX, 'position_y': normY}));
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
+    }
+  }
+
+  @override
+  Future<ApiResult<ShopSection>> updateSectionMapSize(
+      int id, int width, int height) async {
+    try {
+      final box = await _box();
+      for (final key in box.keys) {
+        final raw = box.get(key);
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw);
+        if (map['type'] == 'section' && map['id'] == id) {
+          map['map_width'] = width;
+          map['map_height'] = height;
+          await box.put(key, map);
+          return ApiResult.success(data: ShopSection.fromJson(map));
+        }
+      }
+      return ApiResult.success(
+          data: ShopSection.fromJson(
+              {'id': id, 'map_width': width, 'map_height': height}));
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
+    }
+  }
+
+  @override
   Future<ApiResult<dynamic>> changeOrderStatus(
       {required String status, required int id}) async {
     try {

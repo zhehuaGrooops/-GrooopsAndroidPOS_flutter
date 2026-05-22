@@ -21,6 +21,8 @@ import '../../../../components/components.dart';
 import '../../../../theme/theme.dart';
 import 'riverpod/right_side_provider.dart';
 import '../../riverpod/provider/main_provider.dart';
+import '../tables/riverpod/tables_provider.dart';
+import '../../../../../repository/hive_repository/products_hive_repository.dart';
 
 class PageViewItem extends ConsumerStatefulWidget {
   final BagData bag;
@@ -1201,7 +1203,174 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
                 isLoading: state.isButtonLoading,
                 title: AppHelpers.getTranslation(TrKeys.order),
                 titleColor: AppStyle.black,
-                onPressed: () {
+                onPressed: () async {
+                  final tablesState = ref.read(tablesProvider);
+                  final activeTable = tablesState.activeOrderTable;
+
+                  if (activeTable != null) {
+                    final tableId = activeTable.id ?? 0;
+                    final isReorder =
+                        tablesState.tableTimers.containsKey(tableId);
+                    final tablesNotifier = ref.read(tablesProvider.notifier);
+                    final rightNotifier = ref.read(rightSideProvider.notifier);
+
+                    final stocks = state.paginateResponse?.stocks ?? [];
+                    // Per-item tax from Hive product category.service_types
+                    final Map<int, Map<String, dynamic>> perItemTax = {};
+                    {
+                      final hiveRepo = ProductsHiveRepository();
+                      final apiRepo = inject<ProductsRepository>();
+                      final orderTypeLower = state.orderType.toLowerCase();
+                      for (int i = 0; i < stocks.length; i++) {
+                        final s = stocks[i];
+                        final uuid = s.stock?.product?.uuid;
+                        final stockId = s.stock?.id;
+                        Map<String, dynamic>? pd;
+                        try {
+                          if (uuid != null) {
+                            final res = await apiRepo.getProductByUuid(uuid);
+                            res.when(
+                                success: (d) => pd = d,
+                                failure: (_, __) {});
+                          }
+                          if (pd == null && stockId != null) {
+                            final res =
+                                await hiveRepo.getProductByStockId(stockId);
+                            res.when(
+                                success: (d) => pd = d,
+                                failure: (_, __) {});
+                          }
+                        } catch (_) {}
+                        if (pd == null) continue;
+                        try {
+                          final catRaw = pd?['category'];
+                          if (catRaw is! Map) continue;
+                          final serviceTypes =
+                              catRaw['service_types'] as List? ?? [];
+                          Map? matchedSt;
+                          for (final st in serviceTypes) {
+                            if (st is! Map) continue;
+                            final name =
+                                (st['name'] as String? ?? '').toLowerCase();
+                            if (orderTypeLower == 'dine_in' &&
+                                name.contains('dine')) {
+                              matchedSt = st;
+                              break;
+                            }
+                            if (orderTypeLower == 'pickup' &&
+                                (name.contains('take') ||
+                                    name.contains('away'))) {
+                              matchedSt = st;
+                              break;
+                            }
+                          }
+                          if (matchedSt == null) continue;
+                          final scRate = num.tryParse(
+                                  matchedSt['service_charge']?.toString() ??
+                                      '0') ??
+                              0;
+                          final taxRate = num.tryParse(
+                                  matchedSt['sst_tax']?.toString() ?? '0') ??
+                              0;
+                          final qty = s.quantity ?? 1;
+                          final unitPrice = s.stock?.price ?? 0;
+                          final at = (s.addons ?? [])
+                              .fold<num>(0, (a, e) => a + (e.price ?? 0));
+                          final total = (unitPrice * qty) + at;
+                          final catTitle = (catRaw['translation'] is Map
+                              ? catRaw['translation']['title']
+                              : null) as String?;
+                          perItemTax[i] = {
+                            'tax': total * (taxRate / 100),
+                            'sc': total * (scRate / 100),
+                            'taxPercent': taxRate,
+                            'scPercent': scRate,
+                            'scType': (catTitle ?? '').toLowerCase(),
+                          };
+                        } catch (_) {}
+                      }
+                    }
+                    final newItems = stocks.asMap().entries.map((entry) {
+                      final i = entry.key;
+                      final stock = entry.value;
+                      final qty = stock.quantity ?? 1;
+                      final unitPrice = stock.stock?.price ?? 0;
+                      final addonsTotal = (stock.addons ?? [])
+                          .fold<num>(0, (s, a) => s + (a.price ?? 0));
+                      final total = (unitPrice * qty) + addonsTotal;
+                      final txData = perItemTax[i];
+                      return <String, dynamic>{
+                        'stockId': stock.stock?.id ?? 0,
+                        'countableId': stock.stock?.countableId,
+                        'productName':
+                            stock.stock?.product?.translation?.title ?? '',
+                        'quantity': qty,
+                        'totalPrice': total,
+                        'taxAmount': txData?['tax'] ?? 0,
+                        'serviceChargeAmount': txData?['sc'] ?? 0,
+                        'taxPercent': txData?['taxPercent'] ?? 0,
+                        'serviceChargePercent': txData?['scPercent'] ?? 0,
+                        'serviceChargeType': txData?['scType'] ?? '',
+                        'categoryId': stock.stock?.product?.category?.id,
+                        'categoryName': stock.stock?.product?.category
+                            ?.translation?.title,
+                        'addonNames': (stock.addons ?? [])
+                            .map((a) =>
+                                a.product?.translation?.title ?? '')
+                            .where((s) => s.isNotEmpty)
+                            .toList(),
+                        'addons': (stock.addons ?? [])
+                            .map((a) => <String, dynamic>{
+                                  'stockId': a.id ?? 0,
+                                  'countableId': a.stockId,
+                                  'quantity': a.quantity ?? 1,
+                                  'price': a.price ?? 0,
+                                })
+                            .toList(),
+                      };
+                    }).toList();
+
+                    if (newItems.isEmpty) return;
+
+                    if (isReorder) {
+                      final existingOrderId =
+                          tablesState.tableOrders[tableId];
+                      if (existingOrderId == null) return;
+                      final ok = await rightNotifier.reorderDineInOrder(
+                        orderId: existingOrderId,
+                        items: newItems,
+                        context: context,
+                      );
+                      if (ok == null || !mounted) return;
+                      final existing =
+                          LocalStorage.getTableItems(tableId);
+                      await LocalStorage.setTableItems(
+                          tableId, [...existing, ...newItems]);
+                      await rightNotifier.printKitchenSlipForReorder(
+                        context,
+                        tableId: tableId,
+                        newItems: newItems,
+                        tableData: activeTable,
+                      );
+                      rightNotifier.clearCalculate();
+                      rightNotifier.clearBag();
+                      tablesNotifier.exitTableOrdering();
+                    } else {
+                      final orderId = await rightNotifier.initDineInOrder(
+                        tableId: tableId,
+                        items: newItems,
+                        context: context,
+                      );
+                      if (orderId == null || !mounted) return;
+                      await LocalStorage.setTableItems(tableId, newItems);
+                      tablesNotifier.setTableOrder(tableId, orderId);
+                      rightNotifier.clearCalculate();
+                      rightNotifier.clearBag();
+                    }
+                    return;
+                  }
+
+                  // Normal (non-table) flow
                   final num totalDiscount = itemLevelDiscount + couponPrice;
                   AppHelpers.showAlertDialog(
                     context: context,
