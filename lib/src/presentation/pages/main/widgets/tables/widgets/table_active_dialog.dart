@@ -1,5 +1,6 @@
 import 'package:admin_desktop/src/core/di/dependency_manager.dart';
 import 'package:admin_desktop/src/core/utils/local_storage.dart';
+import 'package:admin_desktop/src/models/data/table_data.dart' show TableData;
 import 'package:admin_desktop/src/models/response/product_calculate_response.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,13 +18,11 @@ import 'manager_pin_dialog.dart';
 import 'table_timer_display.dart';
 
 class TableActiveDialog extends ConsumerStatefulWidget {
-  final int tableId;
-  final String tableName;
+  final TableData tableData;
 
   const TableActiveDialog({
     super.key,
-    required this.tableId,
-    required this.tableName,
+    required this.tableData,
   });
 
   @override
@@ -41,7 +40,7 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
 
   void _loadItems() {
     setState(() {
-      _items = LocalStorage.getTableItems(widget.tableId);
+      _items = LocalStorage.getTableItems(widget.tableData.id ?? 0);
     });
   }
 
@@ -51,6 +50,7 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
   void _cancelItem(int index) {
     final tablesNotifier = ref.read(tablesProvider.notifier);
     final tablesState = ref.read(tablesProvider);
+    final tableId = widget.tableData.id ?? 0;
     Navigator.pop(context);
     AppHelpers.showAlertDialog(
       context: context,
@@ -58,25 +58,22 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
         onVerified: () async {
           final updated = List<Map<String, dynamic>>.from(_items)
             ..removeAt(index);
-          await LocalStorage.setTableItems(widget.tableId, updated);
+          await LocalStorage.setTableItems(tableId, updated);
           if (updated.isEmpty) {
-            final orderId = tablesState.tableOrders[widget.tableId];
+            final orderId = tablesState.tableOrders[tableId];
             if (orderId != null) {
               await ordersRepository.setOrderVoided(orderId: orderId);
             }
-            tablesNotifier.clearTableTimer(widget.tableId);
-            tablesNotifier.clearTableOrder(widget.tableId);
-            await LocalStorage.clearTableItems(widget.tableId);
+            tablesNotifier.clearTableTimer(tableId);
+            tablesNotifier.clearTableOrder(tableId);
+            await LocalStorage.clearTableItems(tableId);
             return;
           }
           if (!mounted) return;
           // ignore: use_build_context_synchronously
           AppHelpers.showAlertDialog(
             context: context,
-            child: TableActiveDialog(
-              tableId: widget.tableId,
-              tableName: widget.tableName,
-            ),
+            child: TableActiveDialog(tableData: widget.tableData),
           );
         },
       ),
@@ -84,11 +81,7 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
   }
 
   void _addMoreItems() {
-    final tableData = ref
-        .read(tablesProvider)
-        .tableListData
-        .firstWhere((t) => t?.id == widget.tableId, orElse: () => null);
-    if (tableData == null) return;
+    final tableData = widget.tableData;
     final tablesNotifier = ref.read(tablesProvider.notifier);
     final rightNotifier = ref.read(rightSideProvider.notifier);
     final mainNotifier = ref.read(mainProvider.notifier);
@@ -105,12 +98,8 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
   void _checkout() {
     if (_items.isEmpty) return;
 
-    final tableData = ref
-        .read(tablesProvider)
-        .tableListData
-        .firstWhere((t) => t?.id == widget.tableId, orElse: () => null);
-    if (tableData == null) return;
-
+    final tableData = widget.tableData;
+    final tableId = tableData.id ?? 0;
     final tablesNotifier = ref.read(tablesProvider.notifier);
     final rightNotifier = ref.read(rightSideProvider.notifier);
     final mainNotifier = ref.read(mainProvider.notifier);
@@ -134,12 +123,13 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
         quantity: qty.toInt(),
       );
     }).toList();
+
     final priceDate = PriceDate(
       stocks: builtStocks,
       totalPrice: _total,
     );
 
-    LocalStorage.setCashoutTableId(widget.tableId);
+    LocalStorage.setCashoutTableId(tableId);
 
     Navigator.pop(context);
 
@@ -154,7 +144,8 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final startDate = ref.watch(tablesProvider).tableTimers[widget.tableId];
+    final tableId = widget.tableData.id ?? 0;
+    final startDate = ref.watch(tablesProvider).tableTimers[tableId];
     final symbol = ref.watch(rightSideProvider).selectedCurrency?.symbol;
 
     return Column(
@@ -168,7 +159,7 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.tableName,
+                  widget.tableData.name ?? '',
                   style: GoogleFonts.inter(
                     color: AppStyle.black,
                     fontWeight: FontWeight.w700,

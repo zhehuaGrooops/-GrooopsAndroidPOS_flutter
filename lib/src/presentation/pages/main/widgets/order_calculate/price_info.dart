@@ -18,6 +18,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:admin_desktop/src/presentation/pages/main/widgets/open_drawer_dialog.dart';
 import 'package:admin_desktop/src/core/di/dependency_manager.dart';
+import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpod/tables_provider.dart';
 
 // ...existing imports...
 
@@ -721,6 +722,22 @@ class PriceInfo extends StatelessWidget {
                                 notifier.clearCalculate();
                                 mainNotifier.setPriceDate(null);
                                 notifier.removeSelectedTable();
+
+                                // clear table timer/order if this was a table checkout
+                                final int? cashoutTableId =
+                                    LocalStorage.getCashoutTableId();
+                                if (cashoutTableId != null) {
+                                  final tablesNotifier =
+                                      ref.read(tablesProvider.notifier);
+                                  tablesNotifier
+                                      .clearTableTimer(cashoutTableId);
+                                  tablesNotifier
+                                      .clearTableOrder(cashoutTableId);
+                                  await LocalStorage
+                                      .clearTableItems(cashoutTableId);
+                                  await LocalStorage.setCashoutTableId(null);
+                                  tablesNotifier.exitTableOrdering();
+                                }
                               }
                             });
                           }

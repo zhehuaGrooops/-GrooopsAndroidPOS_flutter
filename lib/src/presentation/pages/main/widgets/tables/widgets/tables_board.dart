@@ -106,10 +106,7 @@ class TablesBoard extends ConsumerWidget {
                       if (isOccupied) {
                         AppHelpers.showAlertDialog(
                           context: context,
-                          child: TableActiveDialog(
-                            tableId: tableId,
-                            tableName: table.name ?? '',
-                          ),
+                          child: TableActiveDialog(tableData: table),
                         );
                       } else {
                         notifier.enterTableOrdering(table);
@@ -182,13 +179,13 @@ class TablesBoard extends ConsumerWidget {
                           onTap: () {
                             notifier.setSelectTable(i);
                             if (isOccupied) {
-                              AppHelpers.showAlertDialog(
-                                context: context,
-                                child: TableActiveDialog(
-                                  tableId: tableId,
-                                  tableName: state.tableListData[i]?.name ?? '',
-                                ),
-                              );
+                              if (state.tableListData[i] != null) {
+                                AppHelpers.showAlertDialog(
+                                  context: context,
+                                  child: TableActiveDialog(
+                                      tableData: state.tableListData[i]!),
+                                );
+                              }
                             } else {
                               notifier.enterTableOrdering(
                                   state.tableListData[i]!);

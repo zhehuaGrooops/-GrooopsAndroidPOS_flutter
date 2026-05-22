@@ -151,6 +151,9 @@ class _OrderCalculateState extends ConsumerState<OrderCalculate> {
           final uuid = stock.stock?.product?.uuid;
           if (uuid != null) {
             futures.add(productRepo.getProductByUuid(uuid));
+          } else {
+            futures.add(Future.value(
+                const ApiResult.failure(error: 'no_uuid')));
           }
         }
       }
@@ -579,11 +582,24 @@ class _OrderCalculateState extends ConsumerState<OrderCalculate> {
                               couponPrice)
                           .clamp(0, double.infinity);
 
+                      // For table checkout items stored without UUID, category
+                      // data is unavailable so originalSubtotal stays 0. Fall
+                      // back to paginateResponse.totalPrice (the pre-computed
+                      // total that already includes taxes/charges).
+                      final num paginateTotal =
+                          stateRight.paginateResponse?.totalPrice ?? 0;
+                      final bool noCategory =
+                          originalSubtotal == 0 && paginateTotal > 0;
+                      final num effectiveSubtotal =
+                          noCategory ? paginateTotal : originalSubtotal;
+                      final num effectiveFinalTotal =
+                          noCategory ? paginateTotal : finalTotal;
+
                       return Column(
                         children: [
                           _buildPriceRow(
                             AppHelpers.getTranslation(TrKeys.subtotal),
-                            AppHelpers.numberFormat(originalSubtotal),
+                            AppHelpers.numberFormat(effectiveSubtotal),
                           ),
                           if (totalItemLevelDiscount > 0)
                             _buildPriceRow(
@@ -618,7 +634,7 @@ class _OrderCalculateState extends ConsumerState<OrderCalculate> {
                             state: stateRight,
                             notifier: rightSideNotifier,
                             mainNotifier: notifier,
-                            calculatedTotal: finalTotal,
+                            calculatedTotal: effectiveFinalTotal,
                             calculationData: calculationData,
                             groupedByCategory: groupedByCategory,
                           )

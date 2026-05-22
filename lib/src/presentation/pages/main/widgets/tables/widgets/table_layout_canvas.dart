@@ -46,10 +46,7 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
     if (state.tableTimers.containsKey(tableId)) {
       AppHelpers.showAlertDialog(
         context: context,
-        child: TableActiveDialog(
-          tableId: tableId,
-          tableName: table.name ?? '',
-        ),
+        child: TableActiveDialog(tableData: table),
       );
     } else {
       notifier.enterTableOrdering(table);
