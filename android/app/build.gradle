@@ -39,6 +39,10 @@ android {
     compileSdkVersion 36
     ndkVersion = "27.0.12077973"
     namespace "single.grooops.pos"
+    buildFeatures {
+        buildConfig true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -70,16 +74,51 @@ android {
         }
     }
 
+    flavorDimensions "env"
+
+    productFlavors {
+        dev {
+            dimension "env"
+            applicationId "single.grooops.pos.dev"
+            resValue "string", "app_name", "Odera Dev"
+            buildConfigField "String", "FLAVOR", '"dev"'
+        }
+        uat {
+            dimension "env"
+            applicationId "single.grooops.pos.uat"
+            resValue "string", "app_name", "Odera UAT"
+            buildConfigField "String", "FLAVOR", '"uat"'
+        }
+        prod {
+            dimension "env"
+            applicationId "single.grooops.pos"
+            resValue "string", "app_name", "Odera"
+            buildConfigField "String", "FLAVOR", '"prod"'
+        }
+    }
+
     buildTypes {
         release {
             signingConfig signingConfigs.release
             minifyEnabled true
+        }
+        debug {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
         }
     }
 }
 
 flutter {
     source '../..'
+}
+
+android.applicationVariants.all { variant ->
+    variant.outputs.all { output ->
+        def flavorName = variant.flavorName
+        def ver = variant.versionName
+        outputFileName = "Odera-${flavorName}-${ver}.apk"
+    }
 }
 
 dependencies {
