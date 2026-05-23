@@ -224,17 +224,22 @@ class TableRepositoryIml extends TableRepository {
   }
 
   @override
-  Future<ApiResult<TableData>> updateTable(
-      {required int id,
-      required String name,
-      required int chairCount}) async {
+  Future<ApiResult<TableData>> updateTable({
+    required int id,
+    String? name,
+    int? chairCount,
+    double? positionX,
+    double? positionY,
+  }) async {
     try {
       final client = dioHttp.client(requireAuth: true);
       final response = await client.put(
         '/api/v1/dashboard/${LocalStorage.getUser()?.role}/tables/$id',
         data: {
-          'name': name,
-          'chair_count': chairCount,
+          if (name != null) 'name': name,
+          if (chairCount != null) 'chair_count': chairCount.toString(),
+          if (positionX != null) 'position_x': positionX,
+          if (positionY != null) 'position_y': positionY,
         },
       );
       return ApiResult.success(
@@ -438,29 +443,6 @@ class TableRepositoryIml extends TableRepository {
         error: e,
         stackTrace: stackTrace,
         context: 'TableRepositoryIml.getStatistic',
-      );
-      return ApiResult.failure(error: AppHelpers.errorHandler(e));
-    }
-  }
-
-  @override
-  Future<ApiResult<TableData>> updateTablePosition(
-      int id, double normX, double normY) async {
-    try {
-      final client = dioHttp.client(requireAuth: true);
-      final response = await client.patch(
-        '/api/v1/dashboard/${LocalStorage.getUser()?.role}/tables/$id/position',
-        data: {'position_x': normX, 'position_y': normY},
-      );
-      return ApiResult.success(
-          data: TableData.fromJson(
-              Map<String, dynamic>.from(response.data['data'])));
-    } catch (e, stackTrace) {
-      debugPrint('==> updateTablePosition failure: $e');
-      AppHelpers.recordErrorToCrashlytics(
-        error: e,
-        stackTrace: stackTrace,
-        context: 'TableRepositoryIml.updateTablePosition',
       );
       return ApiResult.failure(error: AppHelpers.errorHandler(e));
     }

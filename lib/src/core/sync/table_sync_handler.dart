@@ -73,8 +73,13 @@ class TableSyncHandler {
               await client.put(
                 '/api/v1/dashboard/$role/tables/${map['id']}',
                 data: {
-                  'name': map['name'],
-                  'chair_count': map['chair_count'],
+                  if (map['name'] != null) 'name': map['name'],
+                  if (map['chair_count'] != null)
+                    'chair_count': map['chair_count']?.toString(),
+                  if (map['position_x'] != null)
+                    'position_x': map['position_x'],
+                  if (map['position_y'] != null)
+                    'position_y': map['position_y'],
                 },
               );
               map['_meta'] = {
@@ -82,36 +87,6 @@ class TableSyncHandler {
                 'updatedAt': DateTime.now().toIso8601String(),
               };
               await box.put(key, map);
-            } else if (operation == 'update_position') {
-              // Skip if a pending 'create' exists for same id — table not on backend yet.
-              final createEntry = box.get(key);
-              final isLocalCreate = createEntry is Map &&
-                  createEntry['_meta']?['operation'] == 'create' &&
-                  createEntry['_meta']?['syncStatus'] == 'pending';
-              if (isLocalCreate) {
-                continue;
-              }
-              try {
-                await client.patch(
-                  '/api/v1/dashboard/$role/tables/${map['id']}/position',
-                  data: {
-                    'position_x': map['position_x'],
-                    'position_y': map['position_y'],
-                  },
-                );
-                map['_meta'] = {
-                  'syncStatus': 'synced',
-                  'updatedAt': DateTime.now().toIso8601String(),
-                };
-                await box.put(key, map);
-              } on DioException catch (de) {
-                if (de.response?.statusCode == 404) {
-                  // Table doesn't exist on backend — discard stale position update.
-                  await box.delete(key);
-                } else {
-                  rethrow;
-                }
-              }
             }
           } else if (map['type'] == 'section') {
             if (operation == 'create') {

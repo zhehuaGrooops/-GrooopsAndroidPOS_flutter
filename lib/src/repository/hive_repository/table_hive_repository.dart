@@ -210,10 +210,13 @@ class TableHiveRepository extends TableRepository {
   }
 
   @override
-  Future<ApiResult<TableData>> updateTable(
-      {required int id,
-      required String name,
-      required int chairCount}) async {
+  Future<ApiResult<TableData>> updateTable({
+    required int id,
+    String? name,
+    int? chairCount,
+    double? positionX,
+    double? positionY,
+  }) async {
     try {
       final box = await _box();
       final key = 'table_$id';
@@ -221,9 +224,11 @@ class TableHiveRepository extends TableRepository {
       final map = raw is Map
           ? Map<String, dynamic>.from(raw)
           : <String, dynamic>{'type': 'table', 'id': id};
-      map['name'] = name;
-      map['chair_count'] = chairCount;
-      // Preserve 'create' — updated fields will be included in the create payload on sync.
+      if (name != null) map['name'] = name;
+      if (chairCount != null) map['chair_count'] = chairCount;
+      if (positionX != null) map['position_x'] = positionX;
+      if (positionY != null) map['position_y'] = positionY;
+      // Preserve 'create' — all fields merge into create payload on sync.
       if (map['_meta']?['operation'] != 'create') {
         map['_meta'] = {
           'syncStatus': 'pending',
@@ -300,36 +305,6 @@ class TableHiveRepository extends TableRepository {
     try {
       return ApiResult.success(
           data: CloseDayResponse(data: Data(bookingShopClosedDate: [])));
-    } catch (e) {
-      return ApiResult.failure(error: e.toString());
-    }
-  }
-
-  @override
-  Future<ApiResult<TableData>> updateTablePosition(
-      int id, double normX, double normY) async {
-    try {
-      final box = await _box();
-      final key = 'table_$id';
-      final raw = box.get(key);
-      final map = raw is Map
-          ? Map<String, dynamic>.from(raw)
-          : <String, dynamic>{'type': 'table', 'id': id};
-      map['position_x'] = normX;
-      map['position_y'] = normY;
-      // Preserve 'create' — position will be included in the create payload on sync.
-      if (map['_meta']?['operation'] != 'create') {
-        map['_meta'] = {
-          'syncStatus': 'pending',
-          'operation': 'update_position',
-          'updatedAt': DateTime.now().toIso8601String(),
-        };
-      }
-      await box.put(key, map);
-      if (await AppConnectivity.connectivity()) {
-        await SyncService().pushTableChanges();
-      }
-      return ApiResult.success(data: TableData.fromJson(map));
     } catch (e) {
       return ApiResult.failure(error: e.toString());
     }

@@ -325,8 +325,8 @@ class TablesNotifier extends StateNotifier<TablesState> {
     updated[tableId] = Offset(normX, normY);
     state = state.copyWith(tablePositions: updated);
 
-    final result =
-        await tableRepository.updateTablePosition(tableId, normX, normY);
+    final result = await tableRepository.updateTable(
+        id: tableId, positionX: normX, positionY: normY);
     result.when(
       success: (_) {},
       failure: (error, _) {

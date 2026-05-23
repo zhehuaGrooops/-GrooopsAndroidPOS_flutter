@@ -45,8 +45,13 @@ abstract class TableRepository {
 
   Future<ApiResult<TableResponse>> deleteTable(int id);
 
-  Future<ApiResult<TableData>> updateTable(
-      {required int id, required String name, required int chairCount});
+  Future<ApiResult<TableData>> updateTable({
+    required int id,
+    String? name,
+    int? chairCount,
+    double? positionX,
+    double? positionY,
+  });
 
   Future<ApiResult<List<DisableDates>>> disableDates({
     required DateTime dateTime,
@@ -73,9 +78,6 @@ abstract class TableRepository {
     DateTime? from,
     DateTime? to,
   });
-
-  Future<ApiResult<TableData>> updateTablePosition(
-      int id, double normX, double normY);
 
   Future<ApiResult<ShopSection>> updateSectionMapSize(
       int id, int width, int height);
