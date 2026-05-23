@@ -224,6 +224,34 @@ class TableRepositoryIml extends TableRepository {
   }
 
   @override
+  Future<ApiResult<TableData>> updateTable(
+      {required int id,
+      required String name,
+      required int chairCount}) async {
+    try {
+      final client = dioHttp.client(requireAuth: true);
+      final response = await client.put(
+        '/api/v1/dashboard/${LocalStorage.getUser()?.role}/tables/$id',
+        data: {
+          'name': name,
+          'chair_count': chairCount,
+        },
+      );
+      return ApiResult.success(
+          data: TableData.fromJson(
+              Map<String, dynamic>.from(response.data['data'])));
+    } catch (e, stackTrace) {
+      debugPrint('==> updateTable failure: $e');
+      AppHelpers.recordErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'TableRepositoryIml.updateTable',
+      );
+      return ApiResult.failure(error: AppHelpers.errorHandler(e));
+    }
+  }
+
+  @override
   Future<ApiResult<List<DisableDates>>> disableDates({
     required DateTime dateTime,
     required int? id,
@@ -433,6 +461,31 @@ class TableRepositoryIml extends TableRepository {
         error: e,
         stackTrace: stackTrace,
         context: 'TableRepositoryIml.updateTablePosition',
+      );
+      return ApiResult.failure(error: AppHelpers.errorHandler(e));
+    }
+  }
+
+  @override
+  Future<ApiResult<ShopSection>> updateSection(
+      {required int id, required String name, required num area}) async {
+    try {
+      final client = dioHttp.client(requireAuth: true);
+      final response = await client.put(
+        '/api/v1/dashboard/${LocalStorage.getUser()?.role}/shop-sections/$id',
+        data: {
+          'title': {LocalStorage.getLanguage()?.locale ?? 'en': name},
+          'area': area,
+        },
+      );
+      return ApiResult.success(
+          data: ShopSection.fromJson(response.data['data']));
+    } catch (e, stackTrace) {
+      debugPrint('==> updateSection failure: $e');
+      AppHelpers.recordErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'TableRepositoryIml.updateSection',
       );
       return ApiResult.failure(error: AppHelpers.errorHandler(e));
     }

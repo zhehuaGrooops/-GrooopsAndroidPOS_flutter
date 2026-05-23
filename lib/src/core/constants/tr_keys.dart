@@ -30,6 +30,8 @@ class TrKeys {
   static const String startTime = 'start_time';
   static const String endTime = 'end_time';
   static const String addNewSection = 'add_new_section';
+  static const String editSection = 'edit_section';
+  static const String editTable = 'edit_table';
   static const String sectionName = 'section_name';
   static const String print = 'print';
   static const String guest = 'guest';

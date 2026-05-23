@@ -6,6 +6,7 @@ import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpo
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpod/tables_provider.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpod/tables_state.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/custom_table.dart';
+import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/edit_table_dialog.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/table_active_dialog.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/table_timer_display.dart';
 import 'package:admin_desktop/src/presentation/components/components.dart';
@@ -188,33 +189,13 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
                                   left: -4,
                                   child: GestureDetector(
                                     onTap: () {
-                                      showDialog(
+                                      final idx =
+                                          state.tableListData.indexOf(table);
+                                      AppHelpers.showAlertDialog(
                                         context: context,
-                                        builder: (ctx) => AlertDialog(
-                                          title: const Text('Delete Table'),
-                                          content: Text(
-                                              'Delete "${table.name ?? ''}"?'),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx),
-                                              child: const Text('Cancel'),
-                                            ),
-                                            TextButton(
-                                              onPressed: () {
-                                                Navigator.pop(ctx);
-                                                final idx = state.tableListData
-                                                    .indexOf(table);
-                                                if (idx >= 0) {
-                                                  notifier.deleteTable(
-                                                      index: idx);
-                                                }
-                                              },
-                                              child: const Text('Delete',
-                                                  style: TextStyle(
-                                                      color: Colors.red)),
-                                            ),
-                                          ],
+                                        child: EditTableDialog(
+                                          table: table,
+                                          tableIndex: idx,
                                         ),
                                       );
                                     },
@@ -222,7 +203,7 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
                                       width: _handleSize,
                                       height: _handleSize,
                                       decoration: BoxDecoration(
-                                        color: AppStyle.red,
+                                        color: AppStyle.primary,
                                         borderRadius:
                                             BorderRadius.circular(4.r),
                                         boxShadow: [
@@ -235,7 +216,7 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
                                         ],
                                       ),
                                       child: Icon(
-                                        Icons.delete_outline,
+                                        Icons.edit_outlined,
                                         size: 16.r,
                                         color: AppStyle.white,
                                       ),

@@ -115,11 +115,13 @@ class _TablesPageState extends ConsumerState<TablesPage> {
                               isBooking: state.isListView ? true : false,
                             ),
                           ),
-                          12.horizontalSpace,
-                          CustomRefresher(
-                            onTap: () => notifier.refresh(),
-                            isLoading: state.isLoading,
-                          ),
+                          if (!state.isEditMode) ...[
+                            12.horizontalSpace,
+                            CustomRefresher(
+                              onTap: () => notifier.refresh(),
+                              isLoading: state.isLoading,
+                            ),
+                          ],
                           if (!state.isListView) ...[
                             12.horizontalSpace,
                             ConfirmButton(

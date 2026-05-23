@@ -312,7 +312,11 @@ class TablesNotifier extends StateNotifier<TablesState> {
   }
 
   void toggleEditMode() {
-    state = state.copyWith(isEditMode: !state.isEditMode);
+    final wasEditing = state.isEditMode;
+    state = state.copyWith(isEditMode: !wasEditing);
+    if (wasEditing) {
+      fetchTable(isRefresh: true);
+    }
   }
 
   Future<void> updateTablePosition(
@@ -412,6 +416,52 @@ class TablesNotifier extends StateNotifier<TablesState> {
       }
       state = state.copyWith(isSectionLoading: false);
     });
+    state = state.copyWith(isSectionLoading: false);
+  }
+
+  Future<void> deleteSectionById(
+      {required int id, required BuildContext context}) async {
+    state = state.copyWith(isSectionLoading: true);
+    final res = await tableRepository.deleteSection(id);
+    res.when(
+      success: (_) async {
+        await fetchSectionList(isRefresh: true);
+        if (state.selectSection >= state.shopSectionList.length &&
+            state.shopSectionList.isNotEmpty) {
+          state = state.copyWith(selectSection: 0);
+        }
+      },
+      failure: (failure, status) {
+        if (context.mounted) {
+          AppHelpers.showSnackBar(
+              context, AppHelpers.getTranslation(failure.toString()));
+        }
+        state = state.copyWith(isSectionLoading: false);
+      },
+    );
+    state = state.copyWith(isSectionLoading: false);
+  }
+
+  Future<void> updateSectionById(
+      {required int id,
+      required String name,
+      required num area,
+      required BuildContext context}) async {
+    state = state.copyWith(isSectionLoading: true);
+    final res =
+        await tableRepository.updateSection(id: id, name: name, area: area);
+    res.when(
+      success: (_) async {
+        await fetchSectionList(isRefresh: true);
+      },
+      failure: (failure, status) {
+        if (context.mounted) {
+          AppHelpers.showSnackBar(
+              context, AppHelpers.getTranslation(failure.toString()));
+        }
+        state = state.copyWith(isSectionLoading: false);
+      },
+    );
     state = state.copyWith(isSectionLoading: false);
   }
 
@@ -578,6 +628,24 @@ class TablesNotifier extends StateNotifier<TablesState> {
         );
       }
     });
+  }
+
+  Future<void> updateTable({
+    required int id,
+    required String name,
+    required int chairCount,
+    required BuildContext context,
+  }) async {
+    final result = await tableRepository.updateTable(
+        id: id, name: name, chairCount: chairCount);
+    result.when(
+      success: (_) => fetchTable(isRefresh: true),
+      failure: (error, _) {
+        if (context.mounted) {
+          AppHelpers.showSnackBar(context, AppHelpers.getTranslation(error));
+        }
+      },
+    );
   }
 
   deleteTable({required int index}) async {

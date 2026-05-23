@@ -69,12 +69,105 @@ class TableSyncHandler {
                 queryParameters: {'ids[0]': map['id']},
               );
               await box.delete(key);
-            } else if (operation == 'update_position') {
-              await client.patch(
-                '/api/v1/dashboard/$role/tables/${map['id']}/position',
+            } else if (operation == 'update') {
+              await client.put(
+                '/api/v1/dashboard/$role/tables/${map['id']}',
                 data: {
-                  'position_x': map['position_x'],
-                  'position_y': map['position_y'],
+                  'name': map['name'],
+                  'chair_count': map['chair_count'],
+                },
+              );
+              map['_meta'] = {
+                'syncStatus': 'synced',
+                'updatedAt': DateTime.now().toIso8601String(),
+              };
+              await box.put(key, map);
+            } else if (operation == 'update_position') {
+              // Skip if a pending 'create' exists for same id — table not on backend yet.
+              final createEntry = box.get(key);
+              final isLocalCreate = createEntry is Map &&
+                  createEntry['_meta']?['operation'] == 'create' &&
+                  createEntry['_meta']?['syncStatus'] == 'pending';
+              if (isLocalCreate) {
+                continue;
+              }
+              try {
+                await client.patch(
+                  '/api/v1/dashboard/$role/tables/${map['id']}/position',
+                  data: {
+                    'position_x': map['position_x'],
+                    'position_y': map['position_y'],
+                  },
+                );
+                map['_meta'] = {
+                  'syncStatus': 'synced',
+                  'updatedAt': DateTime.now().toIso8601String(),
+                };
+                await box.put(key, map);
+              } on DioException catch (de) {
+                if (de.response?.statusCode == 404) {
+                  // Table doesn't exist on backend — discard stale position update.
+                  await box.delete(key);
+                } else {
+                  rethrow;
+                }
+              }
+            }
+          } else if (map['type'] == 'section') {
+            if (operation == 'create') {
+              final body = <String, dynamic>{
+                'area': map['area'],
+                'images': [],
+                'title': {
+                  LocalStorage.getLanguage()?.locale ?? 'en':
+                      map['translation']?['title'] ?? '',
+                },
+              };
+              final localId = map['id']?.toString() ?? '';
+              final res = await client.post(
+                '/api/v1/dashboard/$role/shop-sections',
+                queryParameters: body,
+                options: Options(headers: {'X-Idempotency-Key': localId}),
+              );
+              final serverId = res.data['data']?['id'];
+              await box.delete(key);
+              if (serverId != null) {
+                final updated = Map<String, dynamic>.from(map);
+                updated['id'] = serverId;
+                updated['_meta'] = {
+                  'syncStatus': 'synced',
+                  'updatedAt': DateTime.now().toIso8601String(),
+                };
+                await box.put('section_$serverId', updated);
+              }
+            } else if (operation == 'delete') {
+              await client.delete(
+                '/api/v1/dashboard/$role/shop-sections/delete',
+                queryParameters: {'ids[0]': map['id']},
+              );
+              await box.delete(key);
+            } else if (operation == 'update') {
+              await client.put(
+                '/api/v1/dashboard/$role/shop-sections/${map['id']}',
+                data: {
+                  'area': map['area'],
+                  'title': {
+                    LocalStorage.getLanguage()?.locale ?? 'en':
+                        map['translation']?['title'] ?? '',
+                  },
+                },
+              );
+              map['_meta'] = {
+                'syncStatus': 'synced',
+                'updatedAt': DateTime.now().toIso8601String(),
+              };
+              await box.put(key, map);
+            } else if (operation == 'update_map_size') {
+              await client.patch(
+                '/api/v1/dashboard/$role/shop-sections/${map['id']}/map-size',
+                data: {
+                  'map_width': map['map_width'],
+                  'map_height': map['map_height'],
                 },
               );
               map['_meta'] = {
@@ -83,20 +176,6 @@ class TableSyncHandler {
               };
               await box.put(key, map);
             }
-          } else if (map['type'] == 'section' &&
-              operation == 'update_map_size') {
-            await client.patch(
-              '/api/v1/dashboard/$role/shop-sections/${map['id']}/map-size',
-              data: {
-                'map_width': map['map_width'],
-                'map_height': map['map_height'],
-              },
-            );
-            map['_meta'] = {
-              'syncStatus': 'synced',
-              'updatedAt': DateTime.now().toIso8601String(),
-            };
-            await box.put(key, map);
           }
           processed++;
         } catch (e) {

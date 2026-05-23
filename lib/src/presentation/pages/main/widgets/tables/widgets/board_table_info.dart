@@ -1,6 +1,7 @@
 import 'package:admin_desktop/src/models/data/table_statistics_data.dart';
 import 'package:admin_desktop/src/presentation/components/buttons/floor_button.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/add_new_section.dart';
+import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/edit_section_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_remix/flutter_remix.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -64,6 +65,23 @@ class BoardTableInfo extends ConsumerWidget {
                         );
                       }),
                 ),
+                if (state.shopSectionList.isNotEmpty) ...[
+                  8.horizontalSpace,
+                  ConfirmButton(
+                    icon: Icon(FlutterRemix.edit_line, size: 24.r),
+                    paddingSize: 16,
+                    title: "",
+                    onTap: () {
+                      final section =
+                          state.shopSectionList[state.selectSection];
+                      if (section == null) return;
+                      AppHelpers.showAlertDialog(
+                          context: context,
+                          child: EditSectionDialog(section: section));
+                    },
+                  ),
+                ],
+                8.horizontalSpace,
                 ConfirmButton(
                     icon: Icon(FlutterRemix.add_line, size: 24.r),
                     paddingSize: 16,
