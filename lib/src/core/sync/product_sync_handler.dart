@@ -29,7 +29,6 @@ class ProductSyncHandler {
   /// Pulls products data from the server and updates local Hive storage.
   Future<bool> pullProducts() async {
     try {
-      debugPrint("Pulling products data from server...");
       final box = await HiveService.openBox(HiveBoxes.products);
       await box.clear();
       // Non-paginated endpoint now returns all products under `data`
@@ -114,7 +113,6 @@ class ProductSyncHandler {
           total: processed,
           errors: const []));
 
-      debugPrint("Finish pull products data from server.");
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
         error: e,

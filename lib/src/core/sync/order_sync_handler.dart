@@ -30,7 +30,6 @@ class OrderSyncHandler {
   /// Returns `true` if the process completes successfully, `false` otherwise.
   Future<bool> pushOrders() async {
     try {
-      debugPrint("Pushing orders data to server...");
       final box = await HiveService.openBox(HiveBoxes.orders);
       final pending = box.values
           .whereType<Map>()
@@ -58,7 +57,6 @@ class OrderSyncHandler {
           total: pending.length,
           errors: errors));
 
-      debugPrint("Finish push orders data to server.");
       return true;
     } catch (e, stackTrace) {
       debugPrint("Error pushing orders: $e");
@@ -99,8 +97,6 @@ class OrderSyncHandler {
       }
 
       final client = _getClient(requireAuth: true);
-      debugPrint(
-          "Sending POST request to /api/v1/dashboard/$role/orders with body: $body");
       final response = await client.post(
         '/api/v1/dashboard/$role/orders',
         data: body,
@@ -142,7 +138,6 @@ class OrderSyncHandler {
   /// [hiveKey] is the optional local storage key for the order.
   Future<bool> submitPaymentTransaction(int orderId, {dynamic hiveKey}) async {
     try {
-      debugPrint("Submitting transaction for order $orderId...");
       final ordersBox = await HiveService.openBox(HiveBoxes.orders);
       final transactionsBox = await HiveService.openBox(HiveBoxes.transactions);
 
@@ -224,8 +219,6 @@ class OrderSyncHandler {
           'syncedAt': DateTime.now().toIso8601String(),
         };
         await transactionsBox.put(transactionKey, transactionEntry);
-        debugPrint(
-            "Transaction record updated with server ID: $transactionServerId");
       }
 
       // 5. Update order record in Hive for legacy compatibility and UI status
@@ -237,8 +230,6 @@ class OrderSyncHandler {
       meta['transactionUpdatedAt'] = DateTime.now().toIso8601String();
       map['_meta'] = meta;
       await ordersBox.put(orderKey, map);
-
-      debugPrint("Transaction submitted successfully for order $orderId.");
       return true;
     } catch (e, stackTrace) {
       debugPrint("Error submitting transaction: $e");
@@ -254,7 +245,6 @@ class OrderSyncHandler {
   /// Pushes all pending transactions for synced orders to the server.
   Future<bool> pushTransactions() async {
     try {
-      debugPrint("Pushing pending transactions to server...");
       final ordersBox = await HiveService.openBox(HiveBoxes.orders);
       final transactionsBox = await HiveService.openBox(HiveBoxes.transactions);
 
@@ -297,8 +287,6 @@ class OrderSyncHandler {
             errors: const []));
       }
 
-      debugPrint(
-          "Finish push transactions to server. Processed $processed transactions.");
       return true;
     } catch (e, stackTrace) {
       debugPrint("Error pushing transactions: $e");
@@ -409,7 +397,6 @@ class OrderSyncHandler {
   /// Pushes voided orders to the server.
   Future<bool> pushVoidedOrders() async {
     try {
-      debugPrint("Pushing voided orders to server...");
       final box = await HiveService.openBox(HiveBoxes.orders);
       final voidedOrders = box.toMap().entries.where((e) {
         final val = e.value;
@@ -458,7 +445,6 @@ class OrderSyncHandler {
                       ? '/api/v1/dashboard/$role/orders/$serverId/status/update'
                       : '/api/v1/dashboard/$role/orders/$serverId/status/change');
 
-          debugPrint("Sending POST request to $apiUrl with data: $data");
           await client.post(
             apiUrl,
             data: data,
@@ -488,7 +474,6 @@ class OrderSyncHandler {
             errors: const []));
       }
 
-      debugPrint("Finish push voided orders to server.");
       return true;
     } catch (e, stackTrace) {
       debugPrint("Error pushing voided orders: $e");

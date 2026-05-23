@@ -32,6 +32,8 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
   final Map<int, Offset> _dragPixels = {};
   int? _draggingId;
   double _viewZoom = 1.0;
+  double _lastMapW = 0;
+  double _lastMapH = 0;
 
   double _snap(double value) => (value / _snapGrid).round() * _snapGrid;
 
@@ -69,6 +71,14 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
         : null;
     final mapW = section?.mapWidth?.toDouble() ?? _defaultMapWidth;
     final mapH = section?.mapHeight?.toDouble() ?? _defaultMapHeight;
+
+    if (mapW != _lastMapW || mapH != _lastMapH) {
+      _lastMapW = mapW;
+      _lastMapH = mapH;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _transformCtrl.value = Matrix4.identity()..scale(_viewZoom);
+      });
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.max,

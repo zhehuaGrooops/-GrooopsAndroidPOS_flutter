@@ -26,7 +26,6 @@ class FaqsSyncHandler {
   /// Fetches FAQs from the server and saves them to local Hive storage.
   Future<bool> fetchFaqs() async {
     try {
-      debugPrint("Fetching FAQs from server...");
       final client = _getClient(requireAuth: true);
       final response = await client.get('/api/v1/rest/faqs/all');
 
@@ -51,7 +50,6 @@ class FaqsSyncHandler {
             errors: const []));
       }
 
-      debugPrint("Finish fetching FAQs.");
       return true;
     } catch (e, stackTrace) {
       debugPrint("Error fetching FAQs: $e");

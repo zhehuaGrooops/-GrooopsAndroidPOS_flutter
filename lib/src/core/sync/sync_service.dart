@@ -155,6 +155,12 @@ class SyncService {
   /// Pushes pending table/section mutations to the server.
   Future<bool> pushTableChanges() => _tableSyncHandler.pushPendingTables();
 
+  /// Pushes pending table changes then pulls fresh tables and sections from the server.
+  Future<bool> pullTablesFromServer() async {
+    await _tableSyncHandler.pushPendingTables();
+    return _tableSyncHandler.pullTables();
+  }
+
   Future<bool> _isReachable() async {
     try {
       final dio = _getClient(requireAuth: false);
@@ -251,7 +257,6 @@ class SyncService {
     _isSyncing = true;
     _status.add(SyncStatus(running: true, completed: false, errors: const []));
     try {
-      debugPrint("Starting Sync Service to pull data from server...");
       final errors = <String>[];
       final ok1 = await _withRetry(() => _pullCurrencies());
       if (!ok1) errors.add('currencies');
@@ -269,8 +274,7 @@ class SyncService {
           total: 0,
           errors: errors));
       _status.add(SyncStatus(running: false, completed: true, errors: errors));
-
-      debugPrint("Finishing Sync Service to pull data from server...");
+      debugPrint('[Sync:prereq] ${errors.isEmpty ? "ok" : "errors: $errors"}');
     } finally {
       _isSyncing = false;
     }
@@ -286,7 +290,6 @@ class SyncService {
     _isSyncing = true;
     _status.add(SyncStatus(running: true, completed: false, errors: const []));
     try {
-      debugPrint("Starting Sync Service to pull data from server...");
       final errors = <String>[];
       final ok1 = await _withRetry(() => _pullCurrencies());
       if (!ok1) errors.add('currencies');
@@ -342,8 +345,7 @@ class SyncService {
           total: 0,
           errors: errors));
       _status.add(SyncStatus(running: false, completed: true, errors: errors));
-
-      debugPrint("Finishing Sync Service to pull data from server...");
+      debugPrint('[Sync] ${errors.isEmpty ? "ok" : "errors: $errors"}');
     } finally {
       _isSyncing = false;
     }
@@ -351,7 +353,6 @@ class SyncService {
 
   Future<bool> _pullCurrencies() async {
     try {
-      debugPrint("Pulling currency data from server ...");
       // Original API implementation moved from repository: CurrenciesRepositoryImpl.getCurrencies
       final client = HttpService().client(requireAuth: false);
       final response = await client.get('/api/v1/rest/currencies');
@@ -368,9 +369,6 @@ class SyncService {
           processed: list.length,
           total: list.length,
           errors: const []));
-
-      debugPrint("Finished pull currency data.");
-
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -390,7 +388,6 @@ class SyncService {
 
   Future<bool> _pullSettings() async {
     try {
-      debugPrint("Pulling settings data from server...");
       // Original API implementation moved from repository: SettingsSettingsRepositoryImpl.getGlobalSettings
       final client = HttpService().client(requireAuth: false);
       final settingsResponse = await client.get('/api/v1/rest/settings');
@@ -444,8 +441,6 @@ class SyncService {
         final tbox = await HiveService.openBox(HiveBoxes.translations);
         await tbox.put('translations', trParsed.data ?? {});
       } catch (_) {}
-
-      debugPrint("Finishing pulling settings data from server...");
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -467,7 +462,6 @@ class SyncService {
 
   Future<bool> _pullBrands() async {
     try {
-      debugPrint("Pulling brands data from server...");
       // Original API implementation moved from repository: BrandsRepositoryImpl.searchBrands
       final client = HttpService().client(requireAuth: true);
       final response = await client.get(
@@ -486,7 +480,6 @@ class SyncService {
           processed: parsed.data?.length ?? 0,
           total: parsed.data?.length ?? 0,
           errors: const []));
-      debugPrint("Finished pull brands data from server.");
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -506,7 +499,6 @@ class SyncService {
 
   Future<bool> _pullShops() async {
     try {
-      debugPrint("Pulling shops data from server...");
       // Original API implementation moved from repository: ShopsRepositoryImpl.searchShops
       final data = {
         'lang': LocalStorage.getLanguage()?.locale ?? 'en',
@@ -529,7 +521,6 @@ class SyncService {
           processed: parsed.data?.length ?? 0,
           total: parsed.data?.length ?? 0,
           errors: const []));
-      debugPrint("Finish pull shops data from server...");
       return true;
     } catch (e, stackTrace) {
       _progress.add(SyncProgress(
@@ -538,7 +529,6 @@ class SyncService {
           processed: 0,
           total: 0,
           errors: [e.toString()]));
-      debugPrint("Error pull shops data$e");
       AppHelpers.recordSyncErrorToCrashlytics(
         error: e,
         stackTrace: stackTrace,
@@ -550,7 +540,6 @@ class SyncService {
 
   Future<bool> _pullCurrentUserShop() async {
     try {
-      debugPrint("Pulling current user shop data from server...");
       final client = _getClient(requireAuth: true);
       final response = await client.get(
         '/api/v1/dashboard/${LocalStorage.getUser()?.role}/shops',
@@ -568,7 +557,6 @@ class SyncService {
           processed: parsed.data == null ? 0 : 1,
           total: 1,
           errors: const []));
-      debugPrint("Finished pull current user shop data from server.");
       return true;
     } catch (e, stackTrace) {
       _progress.add(SyncProgress(
@@ -577,7 +565,6 @@ class SyncService {
           processed: 0,
           total: 1,
           errors: [e.toString()]));
-      debugPrint("Error pull current user shop data $e");
       AppHelpers.recordSyncErrorToCrashlytics(
         error: e,
         stackTrace: stackTrace,
@@ -614,7 +601,6 @@ class SyncService {
 
   Future<bool> _pullUsers() async {
     try {
-      debugPrint("Pulling users data from server...");
       final hiveRepository = UsersHiveRepository();
       final users = <UserData>[];
       final result = await _getUsers();
@@ -656,7 +642,6 @@ class SyncService {
           ok = false;
         },
       );
-      debugPrint("Finished pull users data from server.");
       return ok;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -692,7 +677,6 @@ class SyncService {
 
   Future<bool> _pullProfileDetails() async {
     try {
-      debugPrint("Pulling profile data from server...");
       final client = HttpService().client(requireAuth: true);
       final response = await client.get('/api/v1/dashboard/user/profile/show');
       final parsed = ProfileResponse.fromJson(response.data);
@@ -710,7 +694,6 @@ class SyncService {
           processed: 1,
           total: 1,
           errors: const []));
-      debugPrint("Finished pull profile data.");
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(

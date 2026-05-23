@@ -7,6 +7,7 @@ import 'package:admin_desktop/src/models/data/table_bookings_data.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../../../../core/sync/sync_service.dart';
 import '../../../../../../core/utils/utils.dart';
 import '../../../../../../models/data/table_data.dart';
 import '../../../../../../models/models.dart';
@@ -30,9 +31,19 @@ class TablesNotifier extends StateNotifier<TablesState> {
     getCloseDay();
   }
 
-  refresh() {
+  Future<void> refresh() async {
     clearTime();
-    changeListTabIndex(state.selectListTabIndex);
+    state = state.copyWith(isLoading: true);
+    final online = await AppConnectivity.connectivity();
+    if (online) {
+      await SyncService().pullTablesFromServer();
+    }
+    await fetchSectionList(isRefresh: true);
+    await fetchTable(isRefresh: true);
+    await loadTableStatuses();
+    if (state.isListView) {
+      changeListTabIndex(state.selectListTabIndex);
+    }
   }
 
   void changeViewMode(int index) {

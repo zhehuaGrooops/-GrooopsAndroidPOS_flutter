@@ -80,7 +80,7 @@ class OrderData {
     _location = json['location'] != null
         ? LocationData.fromJson(json['location'])
         : null;
-    _table = json['table'] != null ? TableData.fromJson(json['table']) : null;
+    _table = json['table'] != null ? TableData.fromJson(Map<String, dynamic>.from(json['table'])) : null;
     _deliveryType = json['delivery_type'];
     _deliveryFee = json['delivery_fee'];
     _deliveryman = json['deliveryman'] != null

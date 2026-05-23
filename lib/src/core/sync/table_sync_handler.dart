@@ -25,7 +25,6 @@ class TableSyncHandler {
   /// Pushes all pending table/section mutations to the server.
   Future<bool> pushPendingTables() async {
     try {
-      debugPrint('Pushing pending table changes to server...');
       final box = await HiveService.openBox(HiveBoxes.tables);
       final role = LocalStorage.getUser()?.role ?? '';
       final client = _getClient(requireAuth: true);
@@ -114,7 +113,6 @@ class TableSyncHandler {
         total: keys.length,
         errors: errors,
       ));
-      debugPrint('Finished pushing table changes. processed=$processed');
       return errors.isEmpty;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -136,7 +134,6 @@ class TableSyncHandler {
   /// Pulls tables and sections from server into Hive, preserving pending local mutations.
   Future<bool> pullTables() async {
     try {
-      debugPrint('Pulling tables and sections from server...');
       final client = _getClient(requireAuth: true);
       final role = LocalStorage.getUser()?.role ?? '';
       final lang = LocalStorage.getLanguage()?.locale ?? 'en';
@@ -145,38 +142,39 @@ class TableSyncHandler {
       // Pull sections
       final sectionsRes = await client.get(
         '/api/v1/dashboard/$role/shop-sections',
-        queryParameters: {'perPage': 200, 'lang': lang},
+        queryParameters: {'perPage': 100, 'lang': lang},
       );
-      final sections = sectionsRes.data['data']?['data'] as List? ?? [];
-      for (final s in sections) {
-        final map = Map<String, dynamic>.from(s as Map);
-        map['type'] = 'section';
-        final key = 'section_${map['id']}';
-        // Preserve locally-pending mutations
-        final existing = box.get(key);
-        if (existing is Map &&
-            existing['_meta']?['syncStatus'] == 'pending') {
-          continue;
-        }
-        await box.put(key, map);
-      }
+      final dynamic rawSections = sectionsRes.data['data'];
+      final sections = rawSections is List ? rawSections : (rawSections is Map ? rawSections['data'] as List? ?? [] : <dynamic>[]);
 
       // Pull tables
       final tablesRes = await client.get(
         '/api/v1/dashboard/$role/tables',
-        queryParameters: {'perPage': 200, 'lang': lang},
+        queryParameters: {'perPage': 100, 'lang': lang},
       );
-      final tables = tablesRes.data['data']?['data'] as List? ?? [];
+      final dynamic rawTables = tablesRes.data['data'];
+      final tables = rawTables is List ? rawTables : (rawTables is Map ? rawTables['data'] as List? ?? [] : <dynamic>[]);
+
+      // Clear all synced entries before writing fresh backend data.
+      // Pending entries (offline mutations not yet pushed) are preserved.
+      final keysToDelete = box.keys.where((k) {
+        final v = box.get(k);
+        return v is Map && v['_meta']?['syncStatus'] != 'pending';
+      }).toList();
+      for (final k in keysToDelete) {
+        await box.delete(k);
+      }
+
+      for (final s in sections) {
+        final map = Map<dynamic, dynamic>.from(s as Map);
+        map['type'] = 'section';
+        await box.put('section_${map['id']}', map);
+      }
+
       for (final t in tables) {
-        final map = Map<String, dynamic>.from(t as Map);
+        final map = Map<dynamic, dynamic>.from(t as Map);
         map['type'] = 'table';
-        final key = 'table_${map['id']}';
-        final existing = box.get(key);
-        if (existing is Map &&
-            existing['_meta']?['syncStatus'] == 'pending') {
-          continue;
-        }
-        await box.put(key, map);
+        await box.put('table_${map['id']}', map);
       }
 
       _progressSink.add(SyncProgress(
@@ -186,8 +184,6 @@ class TableSyncHandler {
         total: sections.length + tables.length,
         errors: const [],
       ));
-      debugPrint(
-          'Finished pulling tables. sections=${sections.length} tables=${tables.length}');
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(

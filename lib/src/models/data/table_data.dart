@@ -91,8 +91,8 @@ class ShopSection {
     translation = json['translation'] != null
         ? Translation.fromJson(Map<String, dynamic>.from(json['translation']))
         : null;
-    mapWidth = json['map_width'] as int?;
-    mapHeight = json['map_height'] as int?;
+    mapWidth = (json['map_width'] as num?)?.toInt();
+    mapHeight = (json['map_height'] as num?)?.toInt();
   }
 
   Map<String, dynamic> toJson() {

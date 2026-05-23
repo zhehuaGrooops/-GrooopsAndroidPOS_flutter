@@ -96,6 +96,8 @@ class TableHiveRepository extends TableRepository {
           .whereType<Map>()
           .where((e) => e['type'] == 'table')
           .where((e) => e['_meta']?['operation'] != 'delete')
+          .where((e) =>
+              shopSectionId == null || e['shop_section_id'] == shopSectionId)
           .map((e) => TableData.fromJson(Map<String, dynamic>.from(e)))
           .toList();
       return ApiResult.success(

@@ -24,7 +24,6 @@ class DiscountSettingSyncHandler {
 
   Future<bool> pullDiscountSettings() async {
     try {
-      debugPrint("Pulling discount settings data from server...");
       final box = await HiveService.openBox(HiveBoxes.discountSettings);
 
       // We'll try to fetch all discount settings by setting a large perPage
@@ -79,8 +78,6 @@ class DiscountSettingSyncHandler {
           total: discountSettings.length,
           errors: const []));
 
-      debugPrint(
-          "Finish pull discount settings data from server. Processed ${discountSettings.length} items.");
       return true;
     } catch (e, stackTrace) {
       debugPrint("Error pulling discount settings: $e");
