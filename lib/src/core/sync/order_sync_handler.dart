@@ -100,6 +100,7 @@ class OrderSyncHandler {
       final response = await client.post(
         '/api/v1/dashboard/$role/orders',
         data: body,
+        options: Options(headers: {'X-Idempotency-Key': key.toString()}),
       );
 
       final parsed = CreateOrderResponse.fromJson(response.data);
