@@ -26,20 +26,17 @@ class EditSectionDialog extends ConsumerStatefulWidget {
 class _EditSectionDialogState extends ConsumerState<EditSectionDialog> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late TextEditingController _name;
-  late TextEditingController _area;
 
   @override
   void initState() {
     _name = TextEditingController(
         text: widget.section.translation?.title ?? '');
-    _area = TextEditingController(text: widget.section.area ?? '');
     super.initState();
   }
 
   @override
   void dispose() {
     _name.dispose();
-    _area.dispose();
     super.dispose();
   }
 
@@ -83,14 +80,6 @@ class _EditSectionDialogState extends ConsumerState<EditSectionDialog> {
                     hintText: TrKeys.sectionName,
                     textEditingController: _name,
                   ),
-                  12.verticalSpace,
-                  TableFormField(
-                    prefixSvg: Assets.svgAreaIcon,
-                    inputType: TextInputType.number,
-                    validator: ValidatorUtils.validateEmpty,
-                    hintText: TrKeys.area,
-                    textEditingController: _area,
-                  ),
                   30.verticalSpace,
                   Row(
                     children: [
@@ -131,7 +120,9 @@ class _EditSectionDialogState extends ConsumerState<EditSectionDialog> {
                               notifier.updateSectionById(
                                 id: id,
                                 name: _name.text,
-                                area: double.tryParse(_area.text) ?? 0,
+                                area: double.tryParse(
+                                        widget.section.area ?? '') ??
+                                    0,
                                 context: context,
                               );
                               context.maybePop();
