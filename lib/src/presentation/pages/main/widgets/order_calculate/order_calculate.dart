@@ -1,6 +1,7 @@
 import 'package:admin_desktop/src/core/constants/constants.dart';
 import 'package:admin_desktop/src/core/di/injection.dart';
 import 'package:admin_desktop/src/core/handlers/api_result.dart';
+import 'package:admin_desktop/src/core/hooks/order_hooks.dart';
 import 'package:admin_desktop/src/core/utils/utils.dart';
 import 'package:admin_desktop/src/models/data/addons_data.dart';
 import 'package:admin_desktop/src/models/data/bag_data.dart';
@@ -35,8 +36,14 @@ class OrderCalculate extends ConsumerStatefulWidget {
 }
 
 class _OrderCalculateState extends ConsumerState<OrderCalculate> {
+  // ── Old path ──────────────────────────────────────────────────────────────
   Future<List<ApiResult<Map<String, dynamic>>>>? _cachedFuture;
   String _lastStocksCacheKey = '';
+
+  // ── Hooks path ────────────────────────────────────────────────────────────
+  final _hooks = OrderHooks();
+  Future<OrderCalculationResult>? _cachedResultFuture;
+  String _lastHooksCacheKey = '';
 
   @override
   void initState() {
@@ -107,6 +114,64 @@ class _OrderCalculateState extends ConsumerState<OrderCalculate> {
     return -1;
   }
 
+  /// Hooks path: builds price rows + PriceInfo from an [OrderCalculationResult].
+  Widget _buildRowsFromResult(
+    OrderCalculationResult r,
+    RightSideState stateRight,
+    RightSideNotifier rightSideNotifier,
+    MainNotifier mainNotifier,
+  ) {
+    final num paginateTotal =
+        stateRight.paginateResponse?.totalPrice ?? 0;
+    final bool noCategory = r.originalSubtotal == 0 && paginateTotal > 0;
+    final num effectiveSubtotal =
+        noCategory ? paginateTotal : r.originalSubtotal;
+    final num effectiveFinalTotal =
+        noCategory ? paginateTotal : r.finalTotal;
+
+    return Column(
+      children: [
+        _buildPriceRow(
+          AppHelpers.getTranslation(TrKeys.subtotal),
+          AppHelpers.numberFormat(effectiveSubtotal),
+        ),
+        if (r.totalItemLevelDiscount > 0)
+          _buildPriceRow(
+            'Item Discount',
+            '-${AppHelpers.numberFormat(r.totalItemLevelDiscount)}',
+            isDiscount: true,
+          ),
+        for (final entry in r.serviceChargeByPercent.entries)
+          if (entry.value > 0)
+            _buildPriceRow(
+              'Service Charge (${double.tryParse(entry.key)?.toStringAsFixed(0)}%)',
+              AppHelpers.numberFormat(entry.value),
+            ),
+        for (final entry in r.taxByPercent.entries)
+          if (entry.value > 0)
+            _buildPriceRow(
+              'SST Tax (${double.tryParse(entry.key)?.toStringAsFixed(0)}%)',
+              AppHelpers.numberFormat(entry.value),
+            ),
+        if (r.billDiscountValue > 0)
+          _buildPriceRow(
+            'Bill Discount',
+            '-${AppHelpers.numberFormat(r.billDiscountValue)}',
+            isDiscount: true,
+          ),
+        PriceInfo(
+          bag: LocalStorage.getBags()[stateRight.selectedBagIndex],
+          state: stateRight,
+          notifier: rightSideNotifier,
+          mainNotifier: mainNotifier,
+          calculatedTotal: effectiveFinalTotal,
+          calculationData: r.calculationData,
+          groupedByCategory: r.groupedByCategory,
+        ),
+      ],
+    );
+  }
+
   Widget _buildPriceRow(String title, String value, {bool isDiscount = false}) {
     return Padding(
       padding: EdgeInsets.only(bottom: 8.r),
@@ -138,27 +203,53 @@ class _OrderCalculateState extends ConsumerState<OrderCalculate> {
       RightSideNotifier rightSideNotifier, RightSideState stateRight) {
     final stocks = stateRight.paginateResponse?.stocks ?? [];
 
-    // Create cache key based on stocks (not tempCalculate)
+    // Cache key based on stocks content
     final stocksCacheKey =
         stocks.map((s) => '${s.stock?.id}_${s.quantity}').join('|');
 
-    // Only recreate future if stocks actually changed
-    if (_cachedFuture == null || _lastStocksCacheKey != stocksCacheKey) {
-      final List<Future<ApiResult<Map<String, dynamic>>>> futures = [];
-      if (stocks.isNotEmpty) {
-        final productRepo = ref.read(productsRepositoryProvider);
-        for (final stock in stocks) {
-          final uuid = stock.stock?.product?.uuid;
-          if (uuid != null) {
-            futures.add(productRepo.getProductByUuid(uuid));
-          } else {
-            futures.add(Future.value(
-                const ApiResult.failure(error: 'no_uuid')));
+    final useOrderHooks = LocalStorage.getUseOrderHooks();
+
+    if (useOrderHooks) {
+      // ── Hooks path: cache key also includes bill-discount + coupon ─────────
+      final selectedBillDiscount = stateRight
+          .bags[stateRight.selectedBagIndex].selectedBillDiscount;
+      final manualText = stateRight.manualBillDiscountText;
+      final couponPrice = stateRight.paginateResponse?.couponPrice ?? 0;
+      final hooksCacheKey =
+          '$stocksCacheKey|${selectedBillDiscount?.id ?? ''}|$manualText|$couponPrice';
+
+      if (_cachedResultFuture == null || _lastHooksCacheKey != hooksCacheKey) {
+        _cachedResultFuture = _hooks.calculation.calculate(
+          stocks: stocks,
+          orderType: stateRight.orderType,
+          bagProducts:
+              stateRight.bags[stateRight.selectedBagIndex].bagProducts,
+          selectedBillDiscount: selectedBillDiscount,
+          manualBillDiscountText: manualText,
+          couponPrice: couponPrice,
+          deliveryFee: stateRight.paginateResponse?.deliveryFee ?? 0,
+        );
+        _lastHooksCacheKey = hooksCacheKey;
+      }
+    } else {
+      // ── Old path: only recreate future if stocks changed ───────────────────
+      if (_cachedFuture == null || _lastStocksCacheKey != stocksCacheKey) {
+        final List<Future<ApiResult<Map<String, dynamic>>>> futures = [];
+        if (stocks.isNotEmpty) {
+          final productRepo = ref.read(productsRepositoryProvider);
+          for (final stock in stocks) {
+            final uuid = stock.stock?.product?.uuid;
+            if (uuid != null) {
+              futures.add(productRepo.getProductByUuid(uuid));
+            } else {
+              futures.add(Future.value(
+                  const ApiResult.failure(error: 'no_uuid')));
+            }
           }
         }
+        _cachedFuture = Future.wait(futures);
+        _lastStocksCacheKey = stocksCacheKey;
       }
-      _cachedFuture = Future.wait(futures);
-      _lastStocksCacheKey = stocksCacheKey;
     }
 
     return Expanded(
@@ -283,6 +374,28 @@ class _OrderCalculateState extends ConsumerState<OrderCalculate> {
                         );
                       }),
                   const Divider(),
+                  if (useOrderHooks)
+                    FutureBuilder<OrderCalculationResult>(
+                      future: _cachedResultFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        }
+                        if (!snapshot.hasData) {
+                          return _buildPriceRow(
+                              'Service Fees', 'Error loading details');
+                        }
+                        return _buildRowsFromResult(
+                          snapshot.data!,
+                          stateRight,
+                          rightSideNotifier,
+                          notifier,
+                        );
+                      },
+                    )
+                  else
                   FutureBuilder<List<ApiResult<Map<String, dynamic>>>>(
                     future: _cachedFuture,
                     builder: (context, snapshot) {

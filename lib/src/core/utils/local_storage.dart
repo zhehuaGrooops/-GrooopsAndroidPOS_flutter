@@ -315,6 +315,12 @@ abstract class LocalStorage {
     await _preferences?.setInt('active_ordering_table_id', tableId ?? -1);
   }
 
+  static Future<void> setUseOrderHooks(bool v) async =>
+      await _preferences?.setBool(AppConstants.keyUseOrderHooks, v);
+
+  static bool getUseOrderHooks() =>
+      _preferences?.getBool(AppConstants.keyUseOrderHooks) ?? false;
+
   static Map<String, dynamic>? getSelectedCurrencyJson() {
     final raw = _preferences?.getString(AppConstants.keySelectedCurrency);
     if (raw == null || raw.isEmpty) return null;

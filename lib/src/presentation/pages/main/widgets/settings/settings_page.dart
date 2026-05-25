@@ -8,6 +8,7 @@ import 'package:admin_desktop/src/presentation/theme/app_style.dart';
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
 import 'package:admin_desktop/src/models/models.dart';
 import 'package:admin_desktop/src/models/data/bluetooth_printer.dart';
+import 'package:admin_desktop/src/core/utils/local_storage.dart';
 import '../../riverpod/provider/main_provider.dart';
 import 'riverpod/kitchen_printer_provider.dart';
 import 'riverpod/printer_provider.dart';
@@ -774,6 +775,42 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         style: TextStyle(color: Colors.red, fontSize: 14.sp),
                       ),
                     ),
+                ],
+              ),
+            ),
+            16.verticalSpace,
+            Container(
+              padding: EdgeInsets.all(20.r),
+              decoration: BoxDecoration(
+                color: AppStyle.white,
+                borderRadius: BorderRadius.circular(10.r),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Developer / Testing',
+                    style: GoogleFonts.inter(
+                        fontSize: 18.sp, fontWeight: FontWeight.w600),
+                  ),
+                  8.verticalSpace,
+                  SwitchListTile(
+                    title: Text(
+                      'Use Order Hooks (new calculation path)',
+                      style: GoogleFonts.inter(fontSize: 15.sp),
+                    ),
+                    subtitle: Text(
+                      'Toggle to compare old vs new order calculation logic',
+                      style: GoogleFonts.inter(
+                          fontSize: 13.sp, color: Colors.grey[600]),
+                    ),
+                    value: LocalStorage.getUseOrderHooks(),
+                    activeColor: AppStyle.primary,
+                    onChanged: (v) async {
+                      await LocalStorage.setUseOrderHooks(v);
+                      setState(() {});
+                    },
+                  ),
                 ],
               ),
             ),

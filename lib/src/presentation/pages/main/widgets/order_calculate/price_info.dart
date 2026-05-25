@@ -1,6 +1,7 @@
 import 'package:admin_desktop/src/core/constants/constants.dart';
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/db/hive_service.dart';
+import 'package:admin_desktop/src/core/hooks/order_hooks.dart';
 import 'package:admin_desktop/src/core/utils/utils.dart';
 import 'package:admin_desktop/src/models/data/bag_data.dart';
 import 'package:admin_desktop/src/models/data/order_body_data.dart';
@@ -48,6 +49,16 @@ class PriceInfo extends StatelessWidget {
 // ADD: Method to create enhanced products from calculation data
   List<EnhancedProductOrder> createEnhancedProducts() {
     final stocks = state.paginateResponse?.stocks ?? [];
+
+    // ── Hooks path ───────────────────────────────────────────────────────────
+    if (LocalStorage.getUseOrderHooks()) {
+      return OrderHooks().enhancedProduct.build(
+        stocks: stocks,
+        calculationData: calculationData ?? [],
+        orderType: state.orderType,
+      );
+    }
+    // ── Original path (unchanged) ────────────────────────────────────────────
     final List<EnhancedProductOrder> enhancedProducts = [];
 
     for (int i = 0; i < stocks.length; i++) {
@@ -119,6 +130,13 @@ class PriceInfo extends StatelessWidget {
   }
 
   Future<String?> _validateAddonStock() async {
+    // ── Hooks path ─────────────────────────────────────────────────────────
+    if (LocalStorage.getUseOrderHooks()) {
+      return OrderHooks().addonValidator.validate(
+        state.paginateResponse?.stocks ?? [],
+      );
+    }
+    // ── Original path (unchanged) ──────────────────────────────────────────
     try {
       final box = await HiveService.openBox(HiveBoxes.products);
 

@@ -21,6 +21,7 @@ abstract class AppConstants {
   static const String keyQueueCounter = 'keyQueueCounter';
   static const String keyQueueDate = 'keyQueueDate';
   static const String keyLangLtr = 'keyLangLtr';
+  static const String keyUseOrderHooks = 'keyUseOrderHooks';
 
   static const String demoSellerLogin = 'sellers@gmail.com';
   static const String demoSellerPassword = 'seller';
