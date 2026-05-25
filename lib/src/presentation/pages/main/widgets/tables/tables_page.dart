@@ -2,7 +2,6 @@ import 'package:admin_desktop/src/models/data/table_data.dart';
 import 'package:admin_desktop/src/presentation/pages/main/riverpod/provider/main_provider.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/left_side.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/order_calculate/order_calculate.dart';
-import 'package:admin_desktop/src/presentation/pages/main/widgets/orders_table/widgets/view_mode.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/right_side/right_side.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/right_side/riverpod/right_side_provider.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/add_new_table.dart';
@@ -12,16 +11,13 @@ import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpo
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/custom_refresher.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/widgets/list_table_info.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_remix/flutter_remix.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../../core/constants/constants.dart';
 import '../../../../../core/utils/utils.dart';
 import '../../../../components/components.dart';
-import '../../../../components/filter_screen.dart';
 import '../../../../theme/app_style.dart';
-import '../orders_table/widgets/start_end_date.dart';
 import 'widgets/table_layout_canvas.dart';
 import 'widgets/tables_list.dart';
 
@@ -106,15 +102,6 @@ class _TablesPageState extends ConsumerState<TablesPage> {
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          16.horizontalSpace,
-                          StartEndDate(
-                            start: state.start,
-                            end: state.end,
-                            filterScreen: FilterScreen(
-                              isTable: !state.isListView ? true : false,
-                              isBooking: state.isListView ? true : false,
-                            ),
-                          ),
                           if (!state.isEditMode) ...[
                             12.horizontalSpace,
                             CustomRefresher(
@@ -122,8 +109,8 @@ class _TablesPageState extends ConsumerState<TablesPage> {
                               isLoading: state.isLoading,
                             ),
                           ],
+                          const Spacer(),
                           if (!state.isListView) ...[
-                            12.horizontalSpace,
                             ConfirmButton(
                               paddingSize: 16,
                               textSize: 14,
@@ -165,22 +152,6 @@ class _TablesPageState extends ConsumerState<TablesPage> {
                                 },
                               ),
                             ],
-                          ],
-                          const Spacer(),
-                          if (!state.isEditMode) ...[
-                            ViewMode(
-                              title: AppHelpers.getTranslation(TrKeys.board),
-                              isActive: !state.isListView,
-                              icon: FlutterRemix.dashboard_line,
-                              onTap: () => notifier.changeViewMode(0),
-                            ),
-                            ViewMode(
-                              title: AppHelpers.getTranslation(TrKeys.list),
-                              isActive: state.isListView,
-                              isLeft: false,
-                              icon: FlutterRemix.menu_fill,
-                              onTap: () => notifier.changeViewMode(1),
-                            ),
                           ],
                         ],
                       ),
@@ -228,42 +199,48 @@ class _TablesPageState extends ConsumerState<TablesPage> {
                                               thickness: 1),
                                         ),
                                         Builder(builder: (_) {
-                                          final localOccupied =
-                                              state.tableOrders.length;
-                                          final backendBooked =
-                                              state.tableStatistic?.booked ?? 0;
-                                          final backendTotal =
-                                              (state.tableStatistic?.available ??
-                                                      0) +
-                                                  backendBooked +
-                                                  (state.tableStatistic
-                                                          ?.occupied ??
-                                                      0);
-                                          final localAvailable = (backendTotal -
-                                                  backendBooked -
-                                                  localOccupied)
-                                              .clamp(0, backendTotal);
+                                          final sectionId = state
+                                                  .shopSectionList.isNotEmpty
+                                              ? state.shopSectionList[
+                                                      state.selectSection]
+                                                  ?.id
+                                              : null;
+                                          final sectionTables = state
+                                              .tableListData
+                                              .where((t) =>
+                                                  t != null &&
+                                                  (sectionId == null ||
+                                                      t.shopSectionId ==
+                                                          sectionId))
+                                              .toList();
+                                          final localOccupied = sectionTables
+                                              .where((t) =>
+                                                  state.tableOrders
+                                                      .containsKey(
+                                                          t!.id ?? 0) ||
+                                                  state.tableTimers
+                                                      .containsKey(t.id ?? 0))
+                                              .length;
+                                          final localAvailable = sectionTables
+                                              .where((t) =>
+                                                  !state.tableOrders
+                                                      .containsKey(
+                                                          t!.id ?? 0) &&
+                                                  !state.tableTimers
+                                                      .containsKey(t.id ?? 0))
+                                              .length;
                                           return Row(children: [
                                             _tableStatus(
                                               tableStatus: TrKeys.available,
                                               tableCount: localAvailable,
                                               statusColor: AppStyle.hint,
-                                              isLoading:
-                                                  state.isStatisticLoading,
-                                            ),
-                                            _tableStatus(
-                                              tableStatus: TrKeys.booked,
-                                              tableCount: backendBooked,
-                                              statusColor: AppStyle.starColor,
-                                              isLoading:
-                                                  state.isStatisticLoading,
+                                              isLoading: false,
                                             ),
                                             _tableStatus(
                                               tableStatus: TrKeys.occupied,
                                               tableCount: localOccupied,
                                               statusColor: AppStyle.red,
-                                              isLoading:
-                                                  state.isStatisticLoading,
+                                              isLoading: false,
                                             ),
                                           ]);
                                         }),
@@ -384,53 +361,15 @@ class _TablesPageState extends ConsumerState<TablesPage> {
     final section = state.shopSectionList.isNotEmpty
         ? state.shopSectionList[state.selectSection]
         : null;
-    final wCtrl =
-        TextEditingController(text: '${section?.mapWidth ?? 800}');
-    final hCtrl =
-        TextEditingController(text: '${section?.mapHeight ?? 600}');
-
-    showDialog(
+    AppHelpers.showAlertDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Map Size',
-            style: GoogleFonts.inter(
-                fontSize: 16, fontWeight: FontWeight.w600)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: wCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Width (px)'),
-            ),
-            8.verticalSpace,
-            TextField(
-              controller: hCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Height (px)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final w = int.tryParse(wCtrl.text) ?? 800;
-              final h = int.tryParse(hCtrl.text) ?? 600;
-              if (w >= 200 && w <= 4000 && h >= 200 && h <= 4000) {
-                final sectionId = section?.id;
-                if (sectionId != null) {
-                  notifier.updateMapSize(sectionId, w, h);
-                }
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
+      child: _MapSizeDialogContent(
+        initialWidth: section?.mapWidth ?? 800,
+        initialHeight: section?.mapHeight ?? 600,
+        onSave: (w, h) {
+          final sectionId = section?.id;
+          if (sectionId != null) notifier.updateMapSize(sectionId, w, h);
+        },
       ),
     );
   }
@@ -669,6 +608,124 @@ class _ExistingOrderBannerState extends State<_ExistingOrderBanner> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _MapSizeDialogContent extends StatefulWidget {
+  final int initialWidth;
+  final int initialHeight;
+  final void Function(int w, int h) onSave;
+
+  const _MapSizeDialogContent({
+    required this.initialWidth,
+    required this.initialHeight,
+    required this.onSave,
+  });
+
+  @override
+  State<_MapSizeDialogContent> createState() => _MapSizeDialogContentState();
+}
+
+class _MapSizeDialogContentState extends State<_MapSizeDialogContent> {
+  late TextEditingController _wCtrl;
+  late TextEditingController _hCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _wCtrl = TextEditingController(text: '${widget.initialWidth}');
+    _hCtrl = TextEditingController(text: '${widget.initialHeight}');
+  }
+
+  @override
+  void dispose() {
+    _wCtrl.dispose();
+    _hCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Map Size',
+              style: GoogleFonts.inter(
+                color: AppStyle.black,
+                fontWeight: FontWeight.w500,
+                fontSize: 16.sp,
+              ),
+            ),
+            InkWell(
+              borderRadius: BorderRadius.circular(10.r),
+              onTap: () => Navigator.pop(context),
+              child: Icon(Icons.close, color: AppStyle.black, size: 24.r),
+            ),
+          ],
+        ),
+        24.verticalSpace,
+        _styledField(_wCtrl, 'Width (px)', Icons.width_normal_outlined),
+        12.verticalSpace,
+        _styledField(_hCtrl, 'Height (px)', Icons.height_outlined),
+        30.verticalSpace,
+        LoginButton(
+          title: AppHelpers.getTranslation(TrKeys.save),
+          onPressed: () {
+            final w = int.tryParse(_wCtrl.text) ?? 800;
+            final h = int.tryParse(_hCtrl.text) ?? 600;
+            if (w >= 200 && w <= 4000 && h >= 200 && h <= 4000) {
+              widget.onSave(w, h);
+              Navigator.pop(context);
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _styledField(
+      TextEditingController ctrl, String hint, IconData icon) {
+    return TextFormField(
+      controller: ctrl,
+      keyboardType: TextInputType.number,
+      style: GoogleFonts.inter(
+        color: AppStyle.black,
+        fontWeight: FontWeight.w500,
+        fontSize: 14.sp,
+      ),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: GoogleFonts.inter(
+          color: AppStyle.hint,
+          fontWeight: FontWeight.w500,
+          fontSize: 13.sp,
+        ),
+        contentPadding:
+            REdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        prefixIcon: Padding(
+          padding: REdgeInsets.symmetric(vertical: 14),
+          child: Icon(icon, size: 22.r, color: AppStyle.black),
+        ),
+        filled: true,
+        fillColor: AppStyle.editProfileCircle,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(5.r),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(5.r),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(5.r),
+          borderSide: BorderSide.none,
+        ),
       ),
     );
   }

@@ -1,3 +1,5 @@
+import 'dart:math' show min;
+
 import 'package:admin_desktop/src/core/constants/constants.dart';
 import 'package:admin_desktop/src/core/utils/utils.dart';
 import 'package:admin_desktop/src/models/data/table_data.dart';
@@ -35,8 +37,16 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
   double _viewZoom = 1.0;
   double _lastMapW = 0;
   double _lastMapH = 0;
+  Size _canvasSize = Size.zero;
 
   double _snap(double value) => (value / _snapGrid).round() * _snapGrid;
+
+  /// Returns zoom so the entire map fits inside the canvas viewport.
+  double _computeFitZoom(double mapW, double mapH) {
+    if (_canvasSize.width == 0 || _canvasSize.height == 0) return 1.0;
+    return min(_canvasSize.width / mapW, _canvasSize.height / mapH)
+        .clamp(0.2, 2.5);
+  }
 
   void _setZoom(double zoom) {
     setState(() => _viewZoom = zoom);
@@ -77,7 +87,8 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
       _lastMapW = mapW;
       _lastMapH = mapH;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _transformCtrl.value = Matrix4.identity()..scale(_viewZoom);
+        if (!mounted) return;
+        _setZoom(_computeFitZoom(mapW, mapH));
       });
     }
 
@@ -86,15 +97,18 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (!state.isEditMode) ...[
-          _topWidgets(state, notifier),
+          _topWidgets(state, notifier, mapW, mapH),
           16.verticalSpace,
         ],
         Expanded(
-          child: InteractiveViewer(
+          child: LayoutBuilder(
+            builder: (ctx, constraints) {
+              _canvasSize = Size(constraints.maxWidth, constraints.maxHeight);
+              return InteractiveViewer(
             transformationController: _transformCtrl,
             constrained: false,
             boundaryMargin: const EdgeInsets.all(200),
-            minScale: 0.5,
+            minScale: 0.2,
             maxScale: 2.5,
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -140,17 +154,11 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
                       if (state.selectTabIndex == 1 && isOccupied) {
                         return const SizedBox.shrink();
                       }
-                      if (state.selectTabIndex == 3 && !isOccupied) {
+                      if (state.selectTabIndex == 2 && !isOccupied) {
                         return const SizedBox.shrink();
                       }
-                      final isBooked =
-                          state.tableStatistic?.bookedIds.contains(tableId) ??
-                              false;
-                      final type = isOccupied
-                          ? TrKeys.occupied
-                          : isBooked
-                              ? TrKeys.booked
-                              : TrKeys.available;
+                      final type =
+                          isOccupied ? TrKeys.occupied : TrKeys.available;
                       final tableModel = TableModel(
                         name: table.name ?? '',
                         chairCount: table.chairCount ?? 0,
@@ -303,20 +311,27 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
                 ),
               ),
             ),
-          ),
-        ),
+          );
+        },
+      ),
+    ),
       ],
     );
   }
 
-  Widget _topWidgets(TablesState state, TablesNotifier notifier) {
+  Widget _topWidgets(
+      TablesState state, TablesNotifier notifier, double mapW, double mapH) {
     const statusList = [
       TrKeys.allTables,
       TrKeys.available,
-      TrKeys.booked,
       TrKeys.occupied,
     ];
-    const zoomLevels = [0.75, 1.0, 1.25];
+    final fit = _computeFitZoom(mapW, mapH);
+    final zoomOptions = [
+      ('75%', fit * 0.75),
+      ('100%', fit),
+      ('125%', fit * 1.25),
+    ];
     return Row(
       children: [
         for (int i = 0; i < statusList.length; i++)
@@ -334,15 +349,15 @@ class _TableLayoutCanvasState extends ConsumerState<TableLayoutCanvas> {
             ),
           ),
         const Spacer(),
-        for (final zoom in zoomLevels)
+        for (final (label, zoom) in zoomOptions)
           Padding(
             padding: REdgeInsets.only(left: 8),
             child: ConfirmButton(
               paddingSize: 16,
               textSize: 14,
-              title: '${(zoom * 100).toInt()}%',
+              title: label,
               textColor: AppStyle.black,
-              isActive: _viewZoom == zoom,
+              isActive: (_viewZoom - zoom).abs() < 0.05,
               isShadow: true,
               isTab: true,
               onTap: () => _setZoom(zoom),

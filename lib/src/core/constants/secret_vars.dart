@@ -10,7 +10,7 @@ class SecretVars {
       case 'uat':
         return 'https://api.pos.grooops.com.my';
       case 'dev':
-        return 'http://10.216.97.36:8000';
+        return 'http://10.216.97.176:8000';
       default:
         return 'https://api.odera.com.my';
     }
