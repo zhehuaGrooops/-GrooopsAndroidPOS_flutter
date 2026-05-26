@@ -391,14 +391,13 @@ class _MainPageState extends ConsumerState<MainPage>
       title: IntrinsicHeight(
         child: Row(
           children: [
-            16.horizontalSpace,
-            SvgPicture.asset(Assets.svgLogo),
             12.horizontalSpace,
             Text(
               AppHelpers.getAppName() ?? "",
               style: GoogleFonts.inter(
                   color: AppStyle.black, fontWeight: FontWeight.bold),
             ),
+            16.horizontalSpace,
             const VerticalDivider(),
             30.horizontalSpace,
             Expanded(
