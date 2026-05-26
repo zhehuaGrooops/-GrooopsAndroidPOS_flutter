@@ -75,6 +75,7 @@ class _MainPageState extends ConsumerState<MainPage>
   bool _isCashSessionOpen = false;
   bool _isDrawerActive = false;
   bool _isInitialSyncing = false;
+  bool _isManuallySyncing = false;
 
   late List<IndexedStackChild> list;
   late List<IndexedStackChild> listWaiter;
@@ -525,6 +526,37 @@ class _MainPageState extends ConsumerState<MainPage>
             //       FlutterRemix.settings_5_line,
             //       color: AppColors.black,
             //     )),
+            _isManuallySyncing
+                ? Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8.r),
+                    child: SizedBox(
+                      width: 20.r,
+                      height: 20.r,
+                      child: const CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppStyle.black,
+                      ),
+                    ),
+                  )
+                : IconButton(
+                    tooltip: 'Sync now',
+                    onPressed: () async {
+                      setState(() => _isManuallySyncing = true);
+                      try {
+                        await SyncService().runManualSync();
+                        if (!mounted) return;
+                        _runInitialLoads();
+                      } finally {
+                        if (mounted) {
+                          setState(() => _isManuallySyncing = false);
+                        }
+                      }
+                    },
+                    icon: const Icon(
+                      FlutterRemix.refresh_line,
+                      color: AppStyle.black,
+                    ),
+                  ),
             IconButton(
                 onPressed: () {
                   showDialog(

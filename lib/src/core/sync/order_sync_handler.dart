@@ -31,16 +31,18 @@ class OrderSyncHandler {
   Future<bool> pushOrders() async {
     try {
       final box = await HiveService.openBox(HiveBoxes.orders);
-      final pending = box.values
-          .whereType<Map>()
-          .where((e) => e['_meta']?['syncStatus'] == 'pending')
-          .toList();
+      // Use entry.key (actual Hive key) not e['id'] from the map value.
+      // e['id'] may differ in runtime type from the stored Hive key, causing
+      // defaultKeyComparator to throw a type cast error in box.get().
+      final pendingEntries = box.toMap().entries.where((entry) {
+        final val = entry.value;
+        return val is Map && val['_meta']?['syncStatus'] == 'pending';
+      }).toList();
 
       int processed = 0;
       List<String> errors = [];
-      for (final e in pending) {
-        final key = e['id'];
-        if (key == null) continue;
+      for (final entry in pendingEntries) {
+        final key = entry.key;
 
         final success = await pushSingleOrder(key);
         if (success) {
@@ -54,7 +56,7 @@ class OrderSyncHandler {
           phase: 'push',
           entity: 'orders',
           processed: processed,
-          total: pending.length,
+          total: pendingEntries.length,
           errors: errors));
 
       return true;
@@ -86,9 +88,19 @@ class OrderSyncHandler {
       final orderBody = OrderBodyData.fromJson(rawBody);
       final body = orderBody.toJson();
 
-      // Fetch role from the users list with the userid from body variable
+      // Fetch role from the users list with the userid from body variable.
+      // DO NOT use usersBox.get(orderBody.userId) — the users box has mixed
+      // key types (int user IDs, String 'profile', String uuids).
+      // Hive's defaultKeyComparator throws _TypeError when comparing int vs
+      // String during skip-list traversal. Iterate values instead.
       final usersBox = await HiveService.openBox(HiveBoxes.users);
-      final userDataMap = usersBox.get(orderBody.userId);
+      Map? userDataMap;
+      for (final raw in usersBox.values) {
+        if (raw is Map && raw['id'] == orderBody.userId) {
+          userDataMap = raw;
+          break;
+        }
+      }
       String role = LocalStorage.getUser()?.role ?? '';
       if (userDataMap != null) {
         final userData =
@@ -106,6 +118,16 @@ class OrderSyncHandler {
       final parsed = CreateOrderResponse.fromJson(response.data);
       final id = parsed.data?.id;
 
+      if (id == null) {
+        // Backend accepted the request but returned no order ID.
+        // All downstream operations (reorder/cancel/cashout) require serverId.
+        // Check backend response structure — POS expects { "data": { "id": <int> } }.
+        debugPrint(
+          "pushSingleOrder $key: backend returned null id. "
+          "Full response: ${response.data}",
+        );
+      }
+
       if (box.containsKey(key)) {
         final map = Map<String, dynamic>.from(box.get(key) as Map);
         map['_meta'] = {
@@ -122,7 +144,12 @@ class OrderSyncHandler {
       }
       return true;
     } catch (ex, stackTrace) {
-      debugPrint("Error pushing order $key: $ex");
+      // Log the full HTTP response body so backend validation errors are visible.
+      final responseBody = (ex is DioException) ? ex.response?.data : null;
+      debugPrint(
+        "pushSingleOrder $key FAILED — error: $ex"
+        "${responseBody != null ? '\nBackend response: $responseBody' : ''}",
+      );
       debugPrint("Stack trace: $stackTrace");
       AppHelpers.recordSyncErrorToCrashlytics(
         error: ex,
@@ -231,6 +258,11 @@ class OrderSyncHandler {
       meta['transactionUpdatedAt'] = DateTime.now().toIso8601String();
       map['_meta'] = meta;
       await ordersBox.put(orderKey, map);
+
+      // 6. Mark order as delivered — payment submitted = order completed.
+      //    updateOrderStatus has its own try/catch; failure is non-fatal.
+      await updateOrderStatus(orderId, 'delivered');
+
       return true;
     } catch (e, stackTrace) {
       debugPrint("Error submitting transaction: $e");
@@ -416,9 +448,16 @@ class OrderSyncHandler {
           final rawBody = Map<String, dynamic>.from((val['body'] ?? {}) as Map);
           final orderBody = OrderBodyData.fromJson(rawBody);
 
-          // Fetch role from the users list with the userid from body variable
+          // Fetch role from the users list with the userid from body variable.
+          // Iterate values — same mixed-key-type fix as pushSingleOrder.
           final usersBox = await HiveService.openBox(HiveBoxes.users);
-          final userDataMap = usersBox.get(orderBody.userId);
+          Map? userDataMap;
+          for (final raw in usersBox.values) {
+            if (raw is Map && raw['id'] == orderBody.userId) {
+              userDataMap = raw;
+              break;
+            }
+          }
 
           String role = LocalStorage.getUser()?.role ?? '';
           int? shopId = LocalStorage.getUser()?.shop?.id;

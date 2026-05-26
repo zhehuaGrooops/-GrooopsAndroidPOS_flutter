@@ -62,4 +62,18 @@ abstract class OrdersRepository {
     required int orderId,
     required int stockId,
   });
+
+  /// Patches a Hive order with payment finalisation details captured at cashout.
+  /// Called by [cashoutTableOrder] before submitting the payment transaction.
+  Future<ApiResult<dynamic>> finalizeOrderPayment({
+    required int orderId,
+    required num paidAmount,
+    required num billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+    required num roundingAmount,
+    required num refundAmount,
+    required String transactionId,
+    required String queueNo,
+  });
 }

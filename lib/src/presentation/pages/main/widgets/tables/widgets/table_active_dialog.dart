@@ -58,7 +58,8 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
         onVerified: () async {
           final canceledItem = _items[index];
           final stockId = canceledItem['stockId'] as int?;
-          final updated = List<Map<String, dynamic>>.from(_items)..removeAt(index);
+          final updated = List<Map<String, dynamic>>.from(_items)
+            ..removeAt(index);
 
           if (updated.isEmpty) {
             final orderId = tablesState.tableOrders[tableId];
@@ -73,7 +74,8 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
 
           final orderId = tablesState.tableOrders[tableId];
           if (orderId != null && stockId != null) {
-            await ordersRepository.cancelOrderItem(orderId: orderId, stockId: stockId);
+            await ordersRepository.cancelOrderItem(
+                orderId: orderId, stockId: stockId);
           }
           await LocalStorage.setTableItems(tableId, updated);
 
@@ -124,6 +126,11 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
           totalPrice: itemTotal,
           quantity: qty.toInt(),
           product: ProductData(
+            // uuid required so order_calculate.dart FutureBuilder can call
+            // getProductByUuid() → fetch category + service_types → compute
+            // SC/tax/discount. Without uuid, originalSubtotal == 0 and the
+            // noCategory fallback skips all tax/SC/bill-discount calculation.
+            uuid: item['uuid'] as String?,
             translation: Translation(title: item['productName'] as String?),
           ),
         ),
@@ -191,8 +198,7 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
             child: Center(
               child: Text(
                 AppHelpers.getTranslation(TrKeys.emptyOrders),
-                style:
-                    GoogleFonts.inter(color: AppStyle.hint, fontSize: 14.sp),
+                style: GoogleFonts.inter(color: AppStyle.hint, fontSize: 14.sp),
               ),
             ),
           )
@@ -352,8 +358,7 @@ class _ItemCard extends StatelessWidget {
           8.horizontalSpace,
           GestureDetector(
             onTap: onCancel,
-            child:
-                Icon(Icons.cancel_outlined, color: AppStyle.red, size: 20.r),
+            child: Icon(Icons.cancel_outlined, color: AppStyle.red, size: 20.r),
           ),
         ],
       ),

@@ -412,6 +412,14 @@ class OrdersHiveRepository extends OrdersRepository {
       }
 
       await box.put(hiveKey, updated);
+
+      // Immediate online sync — don't wait for 2-min SyncService tick.
+      // pushVoidedOrders filters by serverId != null internally, safe to call always.
+      final serverId = raw['_meta']?['serverId'];
+      if (serverId != null && await AppConnectivity.connectivity()) {
+        await SyncService().pushVoidedOrders();
+      }
+
       return const ApiResult.success(data: null);
     } catch (e) {
       return ApiResult.failure(error: e.toString());
@@ -699,6 +707,103 @@ class OrdersHiveRepository extends OrdersRepository {
       if (newSyncStatus == 'update_pending' && await AppConnectivity.connectivity()) {
         await SyncService().pushOrderUpdate(hiveKey);
       }
+
+      return const ApiResult.success(data: null);
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
+    }
+  }
+
+  @override
+  Future<ApiResult<dynamic>> finalizeOrderPayment({
+    required int orderId,
+    required num paidAmount,
+    required num billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+    required num roundingAmount,
+    required num refundAmount,
+    required String transactionId,
+    required String queueNo,
+  }) async {
+    try {
+      final box = await _box();
+
+      dynamic hiveKey;
+      Map<String, dynamic>? raw;
+      for (final entry in box.toMap().entries) {
+        final val = entry.value;
+        if (val is Map) {
+          final id = val['id'];
+          final meta = val['_meta'] as Map?;
+          final serverId = meta?['serverId'];
+          if (id == orderId || serverId == orderId) {
+            hiveKey = entry.key;
+            raw = Map<String, dynamic>.from(val);
+            break;
+          }
+        }
+      }
+      if (raw == null) return const ApiResult.failure(error: 'Order not found');
+
+      final order = OrderHiveModel.fromJson(raw);
+
+      final updatedBody = OrderBodyData(
+        id: order.body?.id,
+        note: order.body?.note,
+        userId: order.body?.userId,
+        deliveryFee: order.body?.deliveryFee,
+        currencyId: order.body?.currencyId,
+        tableId: order.body?.tableId,
+        rate: order.body?.rate,
+        deliveryType: order.body?.deliveryType ?? 'dine_in',
+        phone: order.body?.phone,
+        coupon: order.body?.coupon,
+        location: order.body?.location,
+        address: order.body?.address ?? AddressModel(),
+        deliveryDate: order.body?.deliveryDate ?? '',
+        deliveryTime: order.body?.deliveryTime ?? '',
+        bagData: order.body?.bagData ?? BagData(),
+        enhancedProducts: order.body?.enhancedProducts,
+        billDiscountAmount: billDiscountAmount,
+        billDiscountType: billDiscountType ?? order.body?.billDiscountType,
+        billDiscountPercent:
+            billDiscountPercent ?? order.body?.billDiscountPercent,
+        transactionId: transactionId,
+        queueNo: queueNo,
+        createdAt: order.body?.createdAt,
+        roundingAmount: roundingAmount,
+        paidAmount: paidAmount,
+        refundAmount: refundAmount,
+      );
+
+      // Recalculate locked total with cashout-time bill discount + rounding.
+      final products = order.body?.enhancedProducts ?? [];
+      num newTotal = products.fold<num>(0, (s, p) => s + p.finalPrice);
+      newTotal = (newTotal - billDiscountAmount + roundingAmount)
+          .clamp(0, double.infinity);
+
+      final serverId = order.meta?.serverId;
+
+      await box.put(
+        hiveKey,
+        OrderHiveModel(
+          id: order.id,
+          body: updatedBody,
+          paymentId: order.paymentId,
+          status: order.status,
+          detailStatus: order.detailStatus,
+          totalPrice: newTotal,
+          userSnapshot: order.userSnapshot,
+          shopSnapshot: order.shopSnapshot,
+          meta: OrderMeta(
+            syncStatus: order.meta?.syncStatus ?? 'pending',
+            transactionStatus: order.meta?.transactionStatus,
+            updatedAt: DateTime.now().toIso8601String(),
+            serverId: serverId,
+          ),
+        ).toJson(),
+      );
 
       return const ApiResult.success(data: null);
     } catch (e) {

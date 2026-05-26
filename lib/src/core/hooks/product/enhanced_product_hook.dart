@@ -13,6 +13,17 @@ class EnhancedProductHook {
   }) {
     final List<EnhancedProductOrder> enhancedProducts = [];
 
+    // Build stockId → calcData lookup. Skip trailing bill-discount entry.
+    // Keyed by stockId so emission order in calculationData doesn't matter.
+    final calcByStockId = <int, Map<String, dynamic>>{};
+    for (final entry in calculationData) {
+      if (entry.containsKey('billDiscountAmount')) continue;
+      final sid = entry['stockId'];
+      if (sid == null) continue;
+      final key = sid is int ? sid : (sid as num).toInt();
+      calcByStockId[key] = entry;
+    }
+
     for (int i = 0; i < stocks.length; i++) {
       final stock = stocks[i];
       final num productPrice =
@@ -21,15 +32,12 @@ class EnhancedProductHook {
           (stock.addons ?? []).fold(0, (sum, e) => sum + (e.price ?? 0));
       final num originalPrice = productPrice + addonsTotal;
 
-      // Per-product calculation data (index-matched).
-      // Skip the trailing bill-discount entry (it has 'billDiscountAmount' key).
-      Map<String, dynamic>? prodCalcData;
-      if (i < calculationData.length) {
-        final entry = calculationData[i];
-        if (!entry.containsKey('billDiscountAmount')) {
-          prodCalcData = entry;
-        }
-      }
+      // Per-product calculation data matched by stockId (not array index).
+      // This is correct even when stocks from the same category are non-contiguous
+      // in the bag, because calculationData emits entries in category-group order.
+      final sid = stock.stock?.id;
+      final Map<String, dynamic>? prodCalcData =
+          sid != null ? calcByStockId[sid] : null;
 
       final String rawItemDiscountStr =
           (prodCalcData?['itemDiscountAmount'] ?? 0).toString();

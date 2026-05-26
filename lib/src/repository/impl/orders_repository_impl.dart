@@ -436,6 +436,22 @@ class OrdersRepositoryImpl extends OrdersRepository {
     return const ApiResult.success(data: null);
   }
 
+  @override
+  Future<ApiResult<dynamic>> finalizeOrderPayment({
+    required int orderId,
+    required num paidAmount,
+    required num billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+    required num roundingAmount,
+    required num refundAmount,
+    required String transactionId,
+    required String queueNo,
+  }) async {
+    // HTTP impl does not manage local Hive order records.
+    return const ApiResult.success(data: null);
+  }
+
   /// Validates the order data returned from fetchOrderById and handles null cases.
   ///
   /// [order] The order model instance to validate.

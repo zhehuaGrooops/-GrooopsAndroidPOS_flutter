@@ -142,6 +142,9 @@ class SyncService {
   Future<bool> pushSingleOrder(dynamic key) =>
       _orderSyncHandler.pushSingleOrder(key);
 
+  /// Pushes all voided (canceled) orders that have not yet been synced.
+  Future<bool> pushVoidedOrders() => _orderSyncHandler.pushVoidedOrders();
+
   /// Pulls payment methods from the server.
   Future<bool> pullPayments() => _paymentSyncHandler.pullPayments();
 
@@ -284,6 +287,10 @@ class SyncService {
     _timer?.cancel();
     _timer = null;
   }
+
+  /// Manually triggers a full push+pull sync cycle immediately.
+  /// Safe to call while the periodic timer is running — guarded by [_isSyncing].
+  Future<void> runManualSync() => _runOnce();
 
   Future<void> _runOnce() async {
     if (_isSyncing) return;

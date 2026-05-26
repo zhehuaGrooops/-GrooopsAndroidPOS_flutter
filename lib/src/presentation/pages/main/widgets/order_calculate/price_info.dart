@@ -640,6 +640,17 @@ class PriceInfo extends StatelessWidget {
                                 context: context,
                                 orderId: existingOrderId,
                                 paymentId: bag.selectedPayment?.id ?? 1,
+                                paidAmount: paid,
+                                billDiscountAmount: billDiscountAmount,
+                                billDiscountType:
+                                    bag.selectedBillDiscount?.method,
+                                billDiscountPercent:
+                                    bag.selectedBillDiscount?.value,
+                                roundingAmount: rounding,
+                                refundAmount: refund < 0 ? refund.abs() : 0,
+                                transactionId: formattedTransactionId ?? '',
+                                queueNo:
+                                    counter.toString().padLeft(4, '0'),
                                 onSuccess: (effectiveId) async {
                                   ref.read(newOrdersProvider.notifier).fetchNewOrders(isRefresh: true);
                                   ref.read(acceptedOrdersProvider.notifier).fetchAcceptedOrders(isRefresh: true);

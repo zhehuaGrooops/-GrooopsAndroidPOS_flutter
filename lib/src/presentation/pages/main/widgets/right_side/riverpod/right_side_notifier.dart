@@ -682,46 +682,14 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
   }
 
   /// Creates an initial dine-in order in Hive and syncs to backend if online.
+  /// [enhancedProducts] are produced by [OrderCalculationHook] + [EnhancedProductHook]
+  /// in page_view_item.dart — no conversion happens here.
   /// Returns the order ID on success, or null on failure.
   Future<int?> initDineInOrder({
     required int tableId,
-    required List<Map<String, dynamic>> items,
+    required List<EnhancedProductOrder> enhancedProducts,
     required BuildContext context,
   }) async {
-    final enhancedProducts = items.map((item) {
-      final addonsList =
-          List<Map<String, dynamic>>.from(item['addons'] as List? ?? []);
-      final num preTax = item['totalPrice'] as num;
-      final num taxAmt = (item['taxAmount'] as num?) ?? 0;
-      final num scAmt = (item['serviceChargeAmount'] as num?) ?? 0;
-      final num? taxPct = item['taxPercent'] as num?;
-      final num? scPct = item['serviceChargePercent'] as num?;
-      final String? scType = item['serviceChargeType'] as String?;
-      return EnhancedProductOrder(
-        stockId: (item['stockId'] as num).toInt(),
-        countableId: item['countableId'] as int?,
-        quantity: (item['quantity'] as num).toInt(),
-        originalPrice: preTax,
-        finalPrice: preTax + taxAmt + scAmt,
-        itemDiscountAmount: 0,
-        serviceChargeAmount: scAmt,
-        serviceChargeType: (scType?.isNotEmpty ?? false) ? scType : null,
-        serviceChargePercent: (scPct ?? 0) > 0 ? scPct : null,
-        taxAmount: taxAmt,
-        taxPercent: (taxPct ?? 0) > 0 ? taxPct : null,
-        categoryId: item['categoryId'] as int?,
-        categoryName: item['categoryName'] as String?,
-        addons: addonsList
-            .map((a) => EnhancedAddonOrder(
-                  stockId: (a['stockId'] as num).toInt(),
-                  countableId: a['countableId'] as int?,
-                  quantity: (a['quantity'] as num).toInt(),
-                  price: a['price'] as num,
-                ))
-            .toList(),
-      );
-    }).toList();
-
     final now = DateTime.now();
     final data = OrderBodyData(
       bagData: BagData(
@@ -761,45 +729,16 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
     return orderId;
   }
 
+  /// Appends [enhancedProducts] to an existing order.
+  /// [enhancedProducts] are produced by [OrderCalculationHook] + [EnhancedProductHook]
+  /// in page_view_item.dart — no conversion happens here.
   Future<int?> reorderDineInOrder({
     required int orderId,
-    required List<Map<String, dynamic>> items,
+    required List<EnhancedProductOrder> enhancedProducts,
     required BuildContext context,
   }) async {
-    final newProducts = items.map((item) {
-      final addonsList = List<Map<String, dynamic>>.from(item['addons'] as List? ?? []);
-      final num preTax = item['totalPrice'] as num;
-      final num taxAmt = (item['taxAmount'] as num?) ?? 0;
-      final num scAmt = (item['serviceChargeAmount'] as num?) ?? 0;
-      final num? taxPct = item['taxPercent'] as num?;
-      final num? scPct = item['serviceChargePercent'] as num?;
-      final String? scType = item['serviceChargeType'] as String?;
-      return EnhancedProductOrder(
-        stockId: (item['stockId'] as num).toInt(),
-        countableId: item['countableId'] as int?,
-        quantity: (item['quantity'] as num).toInt(),
-        originalPrice: preTax,
-        finalPrice: preTax + taxAmt + scAmt,
-        itemDiscountAmount: 0,
-        serviceChargeAmount: scAmt,
-        serviceChargeType: (scType?.isNotEmpty ?? false) ? scType : null,
-        serviceChargePercent: (scPct ?? 0) > 0 ? scPct : null,
-        taxAmount: taxAmt,
-        taxPercent: (taxPct ?? 0) > 0 ? taxPct : null,
-        categoryId: item['categoryId'] as int?,
-        categoryName: item['categoryName'] as String?,
-        addons: addonsList
-            .map((a) => EnhancedAddonOrder(
-                  stockId: (a['stockId'] as num).toInt(),
-                  countableId: a['countableId'] as int?,
-                  quantity: (a['quantity'] as num).toInt(),
-                  price: a['price'] as num,
-                ))
-            .toList(),
-      );
-    }).toList();
-
-    await ordersRepository.addProductsToOrder(orderId: orderId, newItems: newProducts);
+    await ordersRepository.addProductsToOrder(
+        orderId: orderId, newItems: enhancedProducts);
     return orderId;
   }
 
@@ -807,35 +746,72 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
     required BuildContext context,
     required int orderId,
     required int paymentId,
+    required num paidAmount,
+    required num billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+    required num roundingAmount,
+    required num refundAmount,
+    required String transactionId,
+    required String queueNo,
     required Function(int effectiveId) onSuccess,
   }) async {
     state = state.copyWith(isOrderLoading: true);
     try {
       int? serverId;
+      // localHiveKey is the local unix-timestamp Hive key (order.id).
+      // orderId passed in may equal serverId (when init was online and createOrder
+      // returned serverId), so we resolve the actual local Hive key here to avoid
+      // ordersBox.get(serverId) returning null later.
+      int? localHiveKey;
+
       final orderResult = await ordersRepository.fetchOrderById(orderId);
       orderResult.when(
-        success: (order) => serverId = order.meta?.serverId,
+        success: (order) {
+          serverId = order.meta?.serverId;
+          localHiveKey = order.id;
+        },
         failure: (_, __) {},
       );
 
       if (serverId == null && await AppConnectivity.connectivity()) {
-        await SyncService().pushSingleOrder(orderId);
+        await SyncService().pushSingleOrder(localHiveKey ?? orderId);
         final updated = await ordersRepository.fetchOrderById(orderId);
         updated.when(
-          success: (order) => serverId = order.meta?.serverId,
+          success: (order) {
+            serverId = order.meta?.serverId;
+            localHiveKey = order.id;
+          },
           failure: (_, __) {},
         );
       }
 
+      // Persist payment finalisation details to Hive order before submitting.
+      await ordersRepository.finalizeOrderPayment(
+        orderId: orderId,
+        paidAmount: paidAmount,
+        billDiscountAmount: billDiscountAmount,
+        billDiscountType: billDiscountType,
+        billDiscountPercent: billDiscountPercent,
+        roundingAmount: roundingAmount,
+        refundAmount: refundAmount,
+        transactionId: transactionId,
+        queueNo: queueNo,
+      );
+
+      // Use local Hive key for createTransaction so that both the inline
+      // submitPaymentTransaction path and the SyncService pushTransactions
+      // fallback can resolve the Hive order entry by its actual stored key.
+      final localKey = localHiveKey ?? orderId;
       final effectiveId = serverId ?? orderId;
 
       await paymentsRepository.createTransaction(
-        orderId: effectiveId,
+        orderId: localKey,
         paymentId: paymentId,
       );
 
       if (serverId != null && await AppConnectivity.connectivity()) {
-        await SyncService().submitPaymentTransaction(serverId!, hiveKey: orderId);
+        await SyncService().submitPaymentTransaction(serverId!, hiveKey: localKey);
         await SyncService().updateOrderStatusOnBackend(serverId!, 'delivered');
       }
 
