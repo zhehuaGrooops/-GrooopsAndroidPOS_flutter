@@ -405,8 +405,12 @@ class _TableOrderingView extends ConsumerWidget {
             children: [
               if (priceDate != null)
                 GestureDetector(
-                  onTap: () =>
-                      ref.read(mainProvider.notifier).setPriceDate(null),
+                  onTap: () {
+                    LocalStorage.setCashoutTableId(null);
+                    ref.read(tablesProvider.notifier).exitTableOrdering();
+                    ref.read(mainProvider.notifier).setPriceDate(null);
+                    ref.read(rightSideProvider.notifier).clearCalculate();
+                  },
                   child: Icon(Icons.arrow_back_ios_new_rounded,
                       size: 20.r, color: AppStyle.black),
                 )

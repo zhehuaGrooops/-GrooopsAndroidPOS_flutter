@@ -45,6 +45,7 @@ import 'widgets/orders_table/orders/ready/ready_orders_provider.dart';
 import 'widgets/orders_table/orders_table.dart';
 import 'widgets/profile/edit_profile/edit_profile_page.dart';
 import 'widgets/right_side/riverpod/right_side_provider.dart';
+import 'widgets/tables/riverpod/tables_provider.dart';
 import 'widgets/sale_history/sale_history.dart';
 import 'widgets/settings/settings_page.dart';
 import 'widgets/settings/riverpod/printer_provider.dart';
@@ -676,6 +677,13 @@ class _MainPageState extends ConsumerState<MainPage>
                   borderRadius: BorderRadius.circular(10.r)),
               child: IconButton(
                 onPressed: () {
+                  final cashoutId = LocalStorage.getCashoutTableId();
+                  if (cashoutId != null) {
+                    LocalStorage.setCashoutTableId(null);
+                    ref.read(mainProvider.notifier).setPriceDate(null);
+                    ref.read(tablesProvider.notifier).exitTableOrdering();
+                    ref.read(rightSideProvider.notifier).clearCalculate();
+                  }
                   ref.read(mainProvider.notifier).changeIndex(3);
                 },
                 icon: SvgPicture.asset(
@@ -1157,6 +1165,13 @@ class _MainPageState extends ConsumerState<MainPage>
                   borderRadius: BorderRadius.circular(10.r)),
               child: IconButton(
                 onPressed: () {
+                  final cashoutId = LocalStorage.getCashoutTableId();
+                  if (cashoutId != null) {
+                    LocalStorage.setCashoutTableId(null);
+                    ref.read(mainProvider.notifier).setPriceDate(null);
+                    ref.read(tablesProvider.notifier).exitTableOrdering();
+                    ref.read(rightSideProvider.notifier).clearCalculate();
+                  }
                   ref.read(mainProvider.notifier).changeIndex(2);
                 },
                 icon: SvgPicture.asset(

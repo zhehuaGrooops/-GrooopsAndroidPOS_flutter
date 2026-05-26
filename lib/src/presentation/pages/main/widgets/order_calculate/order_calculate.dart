@@ -23,6 +23,7 @@ import 'package:admin_desktop/src/presentation/pages/main/widgets/order_calculat
 
 import '../../../../../models/models.dart';
 import '../right_side/riverpod/right_side_provider.dart';
+import '../tables/riverpod/tables_provider.dart';
 
 final productsRepositoryProvider = Provider<ProductsRepository>((ref) {
   return inject<ProductsRepository>();
@@ -260,6 +261,11 @@ class _OrderCalculateState extends ConsumerState<OrderCalculate> {
               children: [
                 InkWell(
                   onTap: () {
+                    final cashoutId = LocalStorage.getCashoutTableId();
+                    if (cashoutId != null) {
+                      LocalStorage.setCashoutTableId(null);
+                      ref.read(tablesProvider.notifier).exitTableOrdering();
+                    }
                     notifier.setPriceDate(null);
                     rightSideNotifier.clearCalculate();
                   },
