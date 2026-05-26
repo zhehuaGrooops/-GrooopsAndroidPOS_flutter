@@ -53,3 +53,6 @@ coverage/lcov.info
 bugreport-*.zip
 packages/flutter_pos_printer_platform_image_3/example/*
 android/.kotlin/*
+
+CLAUDE.md
+/.claude
