@@ -11,7 +11,6 @@ import 'package:admin_desktop/src/models/data/help_data.dart';
 import 'package:admin_desktop/src/models/models.dart';
 import 'package:admin_desktop/src/repository/impl/settings_repository_impl.dart';
 
-import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 
 import '../../core/db/hive_service.dart';
@@ -270,8 +269,6 @@ class SettingsHiveRepository extends SettingsRepository {
           break;
         }
       }
-      debugPrint('Found sale receipt for saleId=$saleId: ${found != null}');
-      debugPrint('Whole order Json: ${box.toMap()}');
       if (found == null) return ApiResult.success(data: null);
       final saleReceipt = SaleReceipt.fromMap(found.toJson());
       return ApiResult.success(data: saleReceipt);

@@ -12,10 +12,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:admin_desktop/src/core/di/dependency_manager.dart';
-import 'dart:convert';
-
-import 'package:admin_desktop/src/models/data/sale_receipt.dart';
-
 import 'package:admin_desktop/src/presentation/pages/main/widgets/right_side/riverpod/right_side_provider.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/order_calculate/generate_check.dart';
 
@@ -30,24 +26,6 @@ class SaleHistory extends ConsumerStatefulWidget {
 }
 
 class _SaleHistoryState extends ConsumerState<SaleHistory> {
-  void debugPrintFull(Object? object) {
-    String msg;
-    try {
-      if (object is String) {
-        msg = object;
-      } else {
-        msg = const JsonEncoder.withIndent('  ').convert(object);
-      }
-    } catch (_) {
-      msg = object?.toString() ?? '';
-    }
-    const int chunkSize = 2000;
-    for (var i = 0; i < msg.length; i += chunkSize) {
-      final end = (i + chunkSize > msg.length) ? msg.length : i + chunkSize;
-      debugPrint(msg.substring(i, end));
-    }
-  }
-
   @override
   void initState() {
     super.initState();
@@ -159,26 +137,6 @@ class _SaleHistoryState extends ConsumerState<SaleHistory> {
           },
           onOpenReceipt: (sale) async {
             ref.read(rightSideProvider);
-
-            // fetch order receipt summary via SettingsRepository (use repository layer)
-            SaleReceipt? receiptSummary;
-            try {
-              final resp = await settingsRepository
-                  .getSaleReceipt(sale.id?.toString() ?? '');
-              resp.when(
-                success: (data) {
-                  receiptSummary = data;
-                },
-                failure: (err, status) {
-                  receiptSummary = null;
-                },
-              );
-            } catch (_) {
-              receiptSummary = null;
-            }
-            debugPrintFull(
-                {'Fetched receipt summary': receiptSummary?.toJson()});
-
             if (!context.mounted) return;
             showDialog(
                 context: context,
