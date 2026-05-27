@@ -22,8 +22,6 @@ class SettingsHiveRepository extends SettingsRepository {
   Future<Box> _translations() => HiveService.openBox(HiveBoxes.translations);
   Future<Box> _faqs() => HiveService.openBox(HiveBoxes.faq);
   Future<Box> _terminalBox() => HiveService.openBox(HiveBoxes.terminal);
-  Future<Box> _transactionCountersBox() =>
-      HiveService.openBox(HiveBoxes.transactionCounters);
   Future<Box> _ordersBox() => HiveService.openBox(HiveBoxes.orders);
 
   @override

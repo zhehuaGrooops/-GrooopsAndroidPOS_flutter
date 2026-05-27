@@ -78,6 +78,10 @@ class OrderSyncHandler {
   }
 
   /// Pushes a single order to the server by its Hive key.
+  ///
+  /// Table orders (tableId != null) → POST /orders/init (idempotent, returns
+  /// existing new order when duplicate request arrives).
+  /// Normal orders → POST /orders (original flow, unchanged).
   Future<bool> pushSingleOrder(dynamic key) async {
     try {
       final box = await HiveService.openBox(HiveBoxes.orders);
@@ -87,6 +91,8 @@ class OrderSyncHandler {
       final rawBody = Map<String, dynamic>.from((e['body'] ?? {}) as Map);
       final orderBody = OrderBodyData.fromJson(rawBody);
       final body = orderBody.toJson();
+
+      final isTableOrder = orderBody.tableId != null;
 
       // Fetch role from the users list with the userid from body variable.
       // DO NOT use usersBox.get(orderBody.userId) — the users box has mixed
@@ -109,8 +115,14 @@ class OrderSyncHandler {
       }
 
       final client = _getClient(requireAuth: true);
+
+      // Table orders use /orders/init. Normal orders use /orders.
+      final url = isTableOrder
+          ? '/api/v1/dashboard/$role/orders/init'
+          : '/api/v1/dashboard/$role/orders';
+
       final response = await client.post(
-        '/api/v1/dashboard/$role/orders',
+        url,
         data: body,
         options: Options(headers: {'X-Idempotency-Key': key.toString()}),
       );
@@ -138,7 +150,15 @@ class OrderSyncHandler {
         };
         await box.put(key, map);
 
-        if (id != null) {
+        // For table orders: parse response for server-assigned order_detail IDs.
+        // Stored per product for future DELETE /orders/{serverId}/items/{detailId}.
+        if (isTableOrder && id != null) {
+          await _storeDetailIdsFromResponse(response.data, key, box);
+        }
+
+        // Normal orders only: submit payment transaction immediately after sync.
+        // Table orders settle payment via POST /orders/{serverId}/cashout instead.
+        if (id != null && !isTableOrder) {
           await submitPaymentTransaction(id, hiveKey: key);
         }
       }
@@ -161,6 +181,7 @@ class OrderSyncHandler {
   }
 
   /// Submits a payment transaction for a specific order.
+  /// Used for **normal (non-table) orders only**.
   ///
   /// [orderId] is the server-side ID of the order.
   /// [hiveKey] is the optional local storage key for the order.
@@ -276,6 +297,9 @@ class OrderSyncHandler {
   }
 
   /// Pushes all pending transactions for synced orders to the server.
+  ///
+  /// Table orders → POST /orders/{serverId}/cashout (reads payment data from Hive body).
+  /// Normal orders → legacy /payments/order/{id}/transactions endpoint.
   Future<bool> pushTransactions() async {
     try {
       final ordersBox = await HiveService.openBox(HiveBoxes.orders);
@@ -303,10 +327,38 @@ class OrderSyncHandler {
           final orderServerId = orderMeta?['serverId'];
 
           if (orderServerId != null) {
-            // Order is synced, so we can submit the transaction
-            final success = await submitPaymentTransaction(orderServerId,
-                hiveKey: localOrderId);
-            if (success) processed++;
+            // Detect table order by tableId in order body.
+            final rawBody = orderEntry['body'];
+            final orderBody = rawBody != null
+                ? OrderBodyData.fromJson(
+                    Map<String, dynamic>.from(rawBody as Map))
+                : null;
+            final isTableOrder = orderBody?.tableId != null;
+
+            if (isTableOrder) {
+              // Table orders: use POST /orders/{serverId}/cashout.
+              // Payment data was stored in order body by finalizeOrderPayment.
+              final paymentId =
+                  tx['payment_id'] ?? orderEntry['payment_id'];
+              if (paymentId == null) continue;
+
+              final success = await cashoutTableOrder(
+                serverId: orderServerId,
+                hiveKey: localOrderId,
+                paymentId: paymentId,
+                paidAmount: orderBody?.paidAmount ?? 0,
+                refundAmount: orderBody?.refundAmount ?? 0,
+                billDiscountAmount: orderBody?.billDiscountAmount,
+                billDiscountType: orderBody?.billDiscountType,
+                billDiscountPercent: orderBody?.billDiscountPercent,
+              );
+              if (success) processed++;
+            } else {
+              // Normal orders: legacy transaction endpoint.
+              final success = await submitPaymentTransaction(orderServerId,
+                  hiveKey: localOrderId);
+              if (success) processed++;
+            }
           }
         }
       }
@@ -332,7 +384,11 @@ class OrderSyncHandler {
     }
   }
 
-  /// PUTs updated product list for an existing synced order.
+  /// Syncs reorder additions for table orders via POST /orders/{serverId}/reorder.
+  /// Sends only the NEW items stored in _meta.pendingProducts, not the full list.
+  ///
+  /// Normal orders fall through to the legacy PUT endpoint (safety path — should
+  /// not occur in normal flow since normal orders don't use update_pending).
   Future<bool> pushOrderUpdate(dynamic key) async {
     try {
       final box = await HiveService.openBox(HiveBoxes.orders);
@@ -349,18 +405,51 @@ class OrderSyncHandler {
       final role = LocalStorage.getUser()?.role ?? '';
       final client = _getClient(requireAuth: true);
 
-      await client.put(
-        '/api/v1/dashboard/$role/orders/$serverId',
-        data: orderBody.toJson(),
-      );
+      final isTableOrder = orderBody.tableId != null;
 
-      map['_meta'] = {
-        ...Map<String, dynamic>.from(meta ?? {}),
-        'syncStatus': 'synced',
-        'updatedAt': DateTime.now().toIso8601String(),
-      };
-      await box.put(key, map);
-      return true;
+      if (isTableOrder) {
+        // Table orders: POST /orders/{serverId}/reorder with only new items.
+        // pendingProducts accumulates new items added since the last successful sync.
+        final pendingRaw = meta?['pendingProducts'] as List?;
+        if (pendingRaw == null || pendingRaw.isEmpty) {
+          // Nothing new to add — just mark synced.
+          final updatedMeta = Map<String, dynamic>.from(meta ?? {});
+          updatedMeta['syncStatus'] = 'synced';
+          map['_meta'] = updatedMeta;
+          await box.put(key, map);
+          return true;
+        }
+
+        final response = await client.post(
+          '/api/v1/dashboard/$role/orders/$serverId/reorder',
+          data: {'products': pendingRaw},
+        );
+
+        // Parse response to store serverDetailIds for newly added items.
+        await _storeDetailIdsFromResponse(response.data, key, box);
+
+        // Reload map after _storeDetailIdsFromResponse may have updated it.
+        final refreshed = Map<String, dynamic>.from(box.get(key) as Map);
+        final updatedMeta = Map<String, dynamic>.from(refreshed['_meta'] ?? {});
+        updatedMeta['syncStatus'] = 'synced';
+        updatedMeta.remove('pendingProducts');
+        updatedMeta['updatedAt'] = DateTime.now().toIso8601String();
+        refreshed['_meta'] = updatedMeta;
+        await box.put(key, refreshed);
+        return true;
+      } else {
+        // Normal orders: keep legacy PUT (safety — update_pending should not occur).
+        await client.put(
+          '/api/v1/dashboard/$role/orders/$serverId',
+          data: orderBody.toJson(),
+        );
+        final updatedMeta = Map<String, dynamic>.from(meta ?? {});
+        updatedMeta['syncStatus'] = 'synced';
+        updatedMeta['updatedAt'] = DateTime.now().toIso8601String();
+        map['_meta'] = updatedMeta;
+        await box.put(key, map);
+        return true;
+      }
     } catch (ex, stackTrace) {
       debugPrint('Error pushing order update $key: $ex');
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -408,6 +497,7 @@ class OrderSyncHandler {
   }
 
   /// Updates an existing order's status on the backend.
+  /// Used for normal orders. Table orders use POST /orders/{serverId}/cashout.
   Future<bool> updateOrderStatus(int serverId, String status) async {
     try {
       final role = LocalStorage.getUser()?.role ?? '';
@@ -428,6 +518,9 @@ class OrderSyncHandler {
   }
 
   /// Pushes voided orders to the server.
+  ///
+  /// Table orders → POST /orders/{serverId}/cancel (restores stock atomically).
+  /// Normal orders → role-based status endpoint (existing behavior unchanged).
   Future<bool> pushVoidedOrders() async {
     try {
       final box = await HiveService.openBox(HiveBoxes.orders);
@@ -447,48 +540,55 @@ class OrderSyncHandler {
           final serverId = val['_meta']['serverId'];
           final rawBody = Map<String, dynamic>.from((val['body'] ?? {}) as Map);
           final orderBody = OrderBodyData.fromJson(rawBody);
-
-          // Fetch role from the users list with the userid from body variable.
-          // Iterate values — same mixed-key-type fix as pushSingleOrder.
-          final usersBox = await HiveService.openBox(HiveBoxes.users);
-          Map? userDataMap;
-          for (final raw in usersBox.values) {
-            if (raw is Map && raw['id'] == orderBody.userId) {
-              userDataMap = raw;
-              break;
-            }
-          }
-
-          String role = LocalStorage.getUser()?.role ?? '';
-          int? shopId = LocalStorage.getUser()?.shop?.id;
-
-          if (userDataMap != null) {
-            final userData =
-                UserData.fromJson(Map<String, dynamic>.from(userDataMap));
-            if (userData.role != null) {
-              role = userData.role!;
-              shopId = userData.shop?.id;
-            }
-          }
+          final isTableOrder = orderBody.tableId != null;
 
           final client = _getClient(requireAuth: true);
-          final data = {
-            'status': 'canceled',
-            if (role == TrKeys.seller && shopId != null) 'shop_id': shopId,
-          };
 
-          final apiUrl = (role == TrKeys.admin || role == TrKeys.seller)
-              ? '/api/v1/dashboard/$role/order/$serverId/status'
-              : (role == TrKeys.waiter
-                  ? '/api/v1/dashboard/$role/order/$serverId/status/update'
-                  : role == TrKeys.cook
-                      ? '/api/v1/dashboard/$role/orders/$serverId/status/update'
-                      : '/api/v1/dashboard/$role/orders/$serverId/status/change');
+          if (isTableOrder) {
+            // Table orders: POST /orders/{serverId}/cancel
+            // Backend handles stock restoration and status=canceled atomically.
+            final role = LocalStorage.getUser()?.role ?? '';
+            await client.post(
+              '/api/v1/dashboard/$role/orders/$serverId/cancel',
+            );
+          } else {
+            // Normal orders: existing role-based status endpoint (unchanged).
+            final usersBox = await HiveService.openBox(HiveBoxes.users);
+            Map? userDataMap;
+            for (final raw in usersBox.values) {
+              if (raw is Map && raw['id'] == orderBody.userId) {
+                userDataMap = raw;
+                break;
+              }
+            }
 
-          await client.post(
-            apiUrl,
-            data: data,
-          );
+            String role = LocalStorage.getUser()?.role ?? '';
+            int? shopId = LocalStorage.getUser()?.shop?.id;
+
+            if (userDataMap != null) {
+              final userData =
+                  UserData.fromJson(Map<String, dynamic>.from(userDataMap));
+              if (userData.role != null) {
+                role = userData.role!;
+                shopId = userData.shop?.id;
+              }
+            }
+
+            final data = {
+              'status': 'canceled',
+              if (role == TrKeys.seller && shopId != null) 'shop_id': shopId,
+            };
+
+            final apiUrl = (role == TrKeys.admin || role == TrKeys.seller)
+                ? '/api/v1/dashboard/$role/order/$serverId/status'
+                : (role == TrKeys.waiter
+                    ? '/api/v1/dashboard/$role/order/$serverId/status/update'
+                    : role == TrKeys.cook
+                        ? '/api/v1/dashboard/$role/orders/$serverId/status/update'
+                        : '/api/v1/dashboard/$role/orders/$serverId/status/change');
+
+            await client.post(apiUrl, data: data);
+          }
 
           // Update sync_voided status in Hive
           final map = Map<String, dynamic>.from(val);
@@ -523,6 +623,220 @@ class OrderSyncHandler {
         context: 'OrderSyncHandler.pushVoidedOrders',
       );
       return false;
+    }
+  }
+
+  // ───────────────────────────── Table-specific endpoints ─────────────────────
+
+  /// Completes payment for a table order: POST /orders/{serverId}/cashout.
+  /// Atomic on server: recalculates totals, creates transaction, sets delivered.
+  Future<bool> cashoutTableOrder({
+    required int serverId,
+    dynamic hiveKey,
+    required int paymentId,
+    required num paidAmount,
+    required num refundAmount,
+    num? billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+  }) async {
+    try {
+      final role = LocalStorage.getUser()?.role ?? '';
+      final client = _getClient(requireAuth: true);
+
+      await client.post(
+        '/api/v1/dashboard/$role/orders/$serverId/cashout',
+        data: {
+          'payment_id': paymentId,
+          'paid_amount': paidAmount,
+          'refund_amount': refundAmount,
+          if (billDiscountAmount != null && billDiscountAmount > 0)
+            'bill_discount_amount': billDiscountAmount,
+          if (billDiscountType != null) 'bill_discount_type': billDiscountType,
+          if (billDiscountPercent != null)
+            'bill_discount_percent': billDiscountPercent,
+        },
+      );
+
+      // Update Hive meta to reflect completed cashout.
+      if (hiveKey != null) {
+        final box = await HiveService.openBox(HiveBoxes.orders);
+        final entry = box.get(hiveKey);
+        if (entry is Map) {
+          final map = Map<String, dynamic>.from(entry);
+          final meta = Map<String, dynamic>.from(map['_meta'] ?? {});
+          meta['syncStatus'] = 'synced';
+          meta['transactionStatus'] = 'synced';
+          meta['updatedAt'] = DateTime.now().toIso8601String();
+          map['_meta'] = meta;
+          await box.put(hiveKey, map);
+        }
+      }
+      return true;
+    } catch (e, stackTrace) {
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'OrderSyncHandler.cashoutTableOrder',
+      );
+      return false;
+    }
+  }
+
+  /// Removes a single item from an open table order.
+  /// DELETE /orders/{serverId}/items/{orderDetailId}
+  /// Backend restores stock for the removed item and its addons.
+  Future<bool> cancelTableOrderItem({
+    required int serverId,
+    required int orderDetailId,
+  }) async {
+    try {
+      final role = LocalStorage.getUser()?.role ?? '';
+      final client = _getClient(requireAuth: true);
+      await client.delete(
+        '/api/v1/dashboard/$role/orders/$serverId/items/$orderDetailId',
+      );
+      return true;
+    } catch (e, stackTrace) {
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'OrderSyncHandler.cancelTableOrderItem',
+      );
+      return false;
+    }
+  }
+
+  /// Processes item-level cancels queued while offline.
+  /// Reads _meta.pendingCancelDetailIds from each Hive order and calls DELETE /items/{id}.
+  Future<bool> pushPendingCancels() async {
+    try {
+      final box = await HiveService.openBox(HiveBoxes.orders);
+      int processed = 0;
+
+      for (final entry in box.toMap().entries) {
+        final val = entry.value;
+        if (val is! Map) continue;
+        final meta = val['_meta'] as Map?;
+        final serverId = meta?['serverId'] as int?;
+        final pendingCancels = meta?['pendingCancelDetailIds'] as List?;
+        if (serverId == null || pendingCancels == null || pendingCancels.isEmpty) {
+          continue;
+        }
+
+        final role = LocalStorage.getUser()?.role ?? '';
+        final client = _getClient(requireAuth: true);
+        final remaining = List<dynamic>.from(pendingCancels);
+
+        for (final detailId in List<dynamic>.from(pendingCancels)) {
+          try {
+            await client.delete(
+              '/api/v1/dashboard/$role/orders/$serverId/items/$detailId',
+            );
+            remaining.remove(detailId);
+            processed++;
+          } catch (_) {
+            // Keep in list — retry on next tick.
+          }
+        }
+
+        final map = Map<String, dynamic>.from(val);
+        final updatedMeta = Map<String, dynamic>.from(meta!);
+        if (remaining.isEmpty) {
+          updatedMeta.remove('pendingCancelDetailIds');
+        } else {
+          updatedMeta['pendingCancelDetailIds'] = remaining;
+        }
+        map['_meta'] = updatedMeta;
+        await box.put(entry.key, map);
+      }
+
+      if (processed > 0) {
+        _progressSink.add(SyncProgress(
+          phase: 'push',
+          entity: 'pending_cancels',
+          processed: processed,
+          total: processed,
+          errors: const [],
+        ));
+      }
+      return true;
+    } catch (e, stackTrace) {
+      AppHelpers.recordSyncErrorToCrashlytics(
+        error: e,
+        stackTrace: stackTrace,
+        context: 'OrderSyncHandler.pushPendingCancels',
+      );
+      return false;
+    }
+  }
+
+  // ───────────────────────────── Private helpers ───────────────────────────────
+
+  /// Parses the server response for a table order init/reorder and stores
+  /// server-assigned order_detail IDs in each EnhancedProductOrder in Hive.
+  ///
+  /// Tries common response field names for the details array:
+  /// `details`, `order_details`, `items`.
+  /// Best-effort — failures are logged and silently ignored.
+  Future<void> _storeDetailIdsFromResponse(
+    dynamic responseData,
+    dynamic hiveKey,
+    dynamic box,
+  ) async {
+    try {
+      final data = responseData['data'] as Map?;
+      if (data == null) return;
+
+      // Try common field names for the order details array.
+      List? detailsList;
+      for (final field in ['details', 'order_details', 'items']) {
+        final candidate = data[field];
+        if (candidate is List && candidate.isNotEmpty) {
+          detailsList = candidate;
+          break;
+        }
+      }
+      if (detailsList == null) return;
+
+      // Build stock_id → server order_detail_id map.
+      final detailIdByStockId = <int, int>{};
+      for (final d in detailsList) {
+        if (d is Map) {
+          // stock_id may be nested under 'stock' or directly present.
+          final stockId = (d['stock_id'] ?? d['stock']?['id']) as int?;
+          final detailId = d['id'] as int?;
+          if (stockId != null && detailId != null) {
+            detailIdByStockId[stockId] = detailId;
+          }
+        }
+      }
+      if (detailIdByStockId.isEmpty) return;
+
+      // Update each EnhancedProductOrder in Hive with its server detail ID.
+      if (!(box as dynamic).containsKey(hiveKey)) return;
+      final current = Map<String, dynamic>.from(box.get(hiveKey) as Map);
+      final bodyMap = current['body'];
+      if (bodyMap is! Map) return;
+      final bodyMutable = Map<String, dynamic>.from(bodyMap);
+      final enhancedRaw = bodyMutable['enhanced_products'];
+      if (enhancedRaw is! List) return;
+
+      bodyMutable['enhanced_products'] = enhancedRaw.map((p) {
+        if (p is! Map) return p;
+        final pm = Map<String, dynamic>.from(p);
+        final stockId = pm['stock_id'] as int?;
+        if (stockId != null && detailIdByStockId.containsKey(stockId)) {
+          pm['server_detail_id'] = detailIdByStockId[stockId];
+        }
+        return pm;
+      }).toList();
+
+      current['body'] = bodyMutable;
+      await box.put(hiveKey, current);
+    } catch (e) {
+      // Non-fatal — detail ID storage is best-effort.
+      debugPrint('_storeDetailIdsFromResponse: $e');
     }
   }
 }

@@ -742,6 +742,10 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
     return orderId;
   }
 
+  void setOrderLoading(bool loading) {
+    state = state.copyWith(isOrderLoading: loading);
+  }
+
   Future<void> cashoutTableOrder({
     required BuildContext context,
     required int orderId,
@@ -811,8 +815,18 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
       );
 
       if (serverId != null && await AppConnectivity.connectivity()) {
-        await SyncService().submitPaymentTransaction(serverId!, hiveKey: localKey);
-        await SyncService().updateOrderStatusOnBackend(serverId!, 'delivered');
+        // Table orders: POST /orders/{serverId}/cashout — single atomic call.
+        // Replaces old submitPaymentTransaction + updateOrderStatusOnBackend 2-step.
+        await SyncService().cashoutTableOrder(
+          serverId: serverId!,
+          hiveKey: localKey,
+          paymentId: paymentId,
+          paidAmount: paidAmount,
+          refundAmount: refundAmount,
+          billDiscountAmount: billDiscountAmount,
+          billDiscountType: billDiscountType,
+          billDiscountPercent: billDiscountPercent,
+        );
       }
 
       if (context.mounted) removeOrderedBag(context);

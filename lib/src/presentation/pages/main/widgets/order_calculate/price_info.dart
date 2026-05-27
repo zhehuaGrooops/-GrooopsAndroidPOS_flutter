@@ -552,8 +552,11 @@ class PriceInfo extends StatelessWidget {
                     isActive: isCalculationValid && !state.isOrderLoading,
                     onPressed: (isCalculationValid && !state.isOrderLoading)
                         ? () async {
+                            // Lock immediately to block double-taps during async setup.
+                            notifier.setOrderLoading(true);
                             final addonStockError = await _validateAddonStock();
                             if (addonStockError != null) {
+                              notifier.setOrderLoading(false);
                               if (context.mounted) {
                                 AppHelpers.showSnackBar(
                                     context, addonStockError);
@@ -600,6 +603,7 @@ class PriceInfo extends StatelessWidget {
                               },
                             );
                             if (formattedTransactionId == null) {
+                              notifier.setOrderLoading(false);
                               try {
                                 if (context.mounted) {
                                   AppHelpers.showSnackBar(context,
@@ -625,7 +629,10 @@ class PriceInfo extends StatelessWidget {
                             // persist new counter and date
                             await LocalStorage.setQueueState(counter, today);
 
-                            if (!context.mounted) return;
+                            if (!context.mounted) {
+                              notifier.setOrderLoading(false);
+                              return;
+                            }
 
                             // TABLE CASHOUT: reuse existing order, skip createOrder
                             final cashoutTableId = LocalStorage.getCashoutTableId();
@@ -633,6 +640,7 @@ class PriceInfo extends StatelessWidget {
                               final tablesState = ref.read(tablesProvider);
                               final existingOrderId = tablesState.tableOrders[cashoutTableId];
                               if (existingOrderId == null) {
+                                notifier.setOrderLoading(false);
                                 AppHelpers.showSnackBar(context, 'No active order for this table');
                                 return;
                               }
@@ -676,11 +684,13 @@ class PriceInfo extends StatelessWidget {
                                   mainNotifier.setPriceDate(null);
                                   notifier.removeSelectedTable();
                                   final tablesNotifier = ref.read(tablesProvider.notifier);
+                                  // Exit ordering immediately so the table page (not
+                                  // the POS/reorder view) is shown while async ops run.
+                                  tablesNotifier.exitTableOrdering();
+                                  await LocalStorage.setCashoutTableId(null);
                                   tablesNotifier.clearTableTimer(cashoutTableId);
                                   tablesNotifier.clearTableOrder(cashoutTableId);
                                   await LocalStorage.clearTableItems(cashoutTableId);
-                                  await LocalStorage.setCashoutTableId(null);
-                                  tablesNotifier.exitTableOrdering();
                                 },
                               );
                               return;

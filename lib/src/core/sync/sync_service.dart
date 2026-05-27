@@ -145,6 +145,42 @@ class SyncService {
   /// Pushes all voided (canceled) orders that have not yet been synced.
   Future<bool> pushVoidedOrders() => _orderSyncHandler.pushVoidedOrders();
 
+  /// Completes payment for a table order via POST /orders/{serverId}/cashout.
+  /// Replaces the old submitPaymentTransaction + updateOrderStatus 2-step flow.
+  Future<bool> cashoutTableOrder({
+    required int serverId,
+    dynamic hiveKey,
+    required int paymentId,
+    required num paidAmount,
+    required num refundAmount,
+    num? billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+  }) =>
+      _orderSyncHandler.cashoutTableOrder(
+        serverId: serverId,
+        hiveKey: hiveKey,
+        paymentId: paymentId,
+        paidAmount: paidAmount,
+        refundAmount: refundAmount,
+        billDiscountAmount: billDiscountAmount,
+        billDiscountType: billDiscountType,
+        billDiscountPercent: billDiscountPercent,
+      );
+
+  /// Removes a single item from an open table order via DELETE /items/{detailId}.
+  Future<bool> cancelTableOrderItem({
+    required int serverId,
+    required int orderDetailId,
+  }) =>
+      _orderSyncHandler.cancelTableOrderItem(
+        serverId: serverId,
+        orderDetailId: orderDetailId,
+      );
+
+  /// Processes item-level cancels queued while offline.
+  Future<bool> pushPendingCancels() => _orderSyncHandler.pushPendingCancels();
+
   /// Pulls payment methods from the server.
   Future<bool> pullPayments() => _paymentSyncHandler.pullPayments();
 
@@ -326,6 +362,8 @@ class SyncService {
       if (!okOpenSession) errors.add('open_sessions');
       final ok6d = await _withRetry(() => _orderSyncHandler.pushPendingOrderUpdates());
       if (!ok6d) errors.add('order_updates');
+      final ok6e = await _withRetry(() => _orderSyncHandler.pushPendingCancels());
+      if (!ok6e) errors.add('pending_cancels');
       final ok7 = await _withRetry(() => _orderSyncHandler.pushOrders());
       if (!ok7) errors.add('orders');
       final ok7b = await _withRetry(() => _orderSyncHandler.pushVoidedOrders());

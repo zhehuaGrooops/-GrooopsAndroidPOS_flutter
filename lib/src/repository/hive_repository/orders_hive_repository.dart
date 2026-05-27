@@ -1,6 +1,7 @@
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/constants/app_constants.dart';
 import 'package:admin_desktop/src/core/handlers/handlers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:admin_desktop/src/models/data/order_data.dart';
 import 'package:admin_desktop/src/models/models.dart';
 import 'package:admin_desktop/src/models/response/orders_paginate_response.dart';
@@ -577,25 +578,35 @@ class OrdersHiveRepository extends OrdersRepository {
       final serverId = order.meta?.serverId;
       final newSyncStatus = serverId != null ? 'update_pending' : 'pending';
 
-      await box.put(
-        hiveKey,
-        OrderHiveModel(
-          id: order.id,
-          body: updatedBody,
-          paymentId: order.paymentId,
-          status: order.status,
-          detailStatus: order.detailStatus,
-          totalPrice: newTotal,
-          userSnapshot: order.userSnapshot,
-          shopSnapshot: order.shopSnapshot,
-          meta: OrderMeta(
-            syncStatus: newSyncStatus,
-            transactionStatus: order.meta?.transactionStatus,
-            updatedAt: DateTime.now().toIso8601String(),
-            serverId: serverId,
-          ),
-        ).toJson(),
-      );
+      final orderMap = OrderHiveModel(
+        id: order.id,
+        body: updatedBody,
+        paymentId: order.paymentId,
+        status: order.status,
+        detailStatus: order.detailStatus,
+        totalPrice: newTotal,
+        userSnapshot: order.userSnapshot,
+        shopSnapshot: order.shopSnapshot,
+        meta: OrderMeta(
+          syncStatus: newSyncStatus,
+          transactionStatus: order.meta?.transactionStatus,
+          updatedAt: DateTime.now().toIso8601String(),
+          serverId: serverId,
+        ),
+      ).toJson();
+
+      // Append newItems to _meta.pendingProducts so pushOrderUpdate sends only
+      // the new items via POST /reorder (not the full product list).
+      final metaMap = Map<String, dynamic>.from(orderMap['_meta'] ?? {});
+      final existingPending =
+          List<dynamic>.from(raw['_meta']?['pendingProducts'] ?? []);
+      metaMap['pendingProducts'] = [
+        ...existingPending,
+        ...newItems.map((p) => p.toJson()),
+      ];
+      orderMap['_meta'] = metaMap;
+
+      await box.put(hiveKey, orderMap);
 
       if (newSyncStatus == 'update_pending' && await AppConnectivity.connectivity()) {
         await SyncService().pushOrderUpdate(hiveKey);
@@ -682,30 +693,83 @@ class OrdersHiveRepository extends OrdersRepository {
       );
 
       final serverId = order.meta?.serverId;
-      final newSyncStatus = serverId != null ? 'update_pending' : 'pending';
 
-      await box.put(
-        hiveKey,
-        OrderHiveModel(
-          id: order.id,
-          body: updatedBody,
-          paymentId: order.paymentId,
-          status: order.status,
-          detailStatus: order.detailStatus,
-          totalPrice: newTotal,
-          userSnapshot: order.userSnapshot,
-          shopSnapshot: order.shopSnapshot,
-          meta: OrderMeta(
-            syncStatus: newSyncStatus,
-            transactionStatus: order.meta?.transactionStatus,
-            updatedAt: DateTime.now().toIso8601String(),
-            serverId: serverId,
-          ),
-        ).toJson(),
+      // For cancels: keep the order's current syncStatus.
+      // If order never synced (serverId==null), item won't be in the init call — correct.
+      // If order is synced (serverId!=null), we handle via DELETE /items/{detailId} below.
+      final keepSyncStatus = order.meta?.syncStatus ?? 'pending';
+
+      // Also remove the canceled item from _meta.pendingProducts if it was
+      // added in a reorder that hasn't synced yet — prevents sending it via reorder.
+      final rawMeta = raw['_meta'] as Map?;
+      List<dynamic> updatedPending = List<dynamic>.from(
+        rawMeta?['pendingProducts'] ?? [],
       );
+      updatedPending.removeWhere((p) {
+        if (p is Map) return p['stock_id'] == stockId;
+        return false;
+      });
 
-      if (newSyncStatus == 'update_pending' && await AppConnectivity.connectivity()) {
-        await SyncService().pushOrderUpdate(hiveKey);
+      final orderMap = OrderHiveModel(
+        id: order.id,
+        body: updatedBody,
+        paymentId: order.paymentId,
+        status: order.status,
+        detailStatus: order.detailStatus,
+        totalPrice: newTotal,
+        userSnapshot: order.userSnapshot,
+        shopSnapshot: order.shopSnapshot,
+        meta: OrderMeta(
+          syncStatus: keepSyncStatus,
+          transactionStatus: order.meta?.transactionStatus,
+          updatedAt: DateTime.now().toIso8601String(),
+          serverId: serverId,
+        ),
+      ).toJson();
+
+      // Preserve pendingProducts (minus canceled item).
+      final metaMap = Map<String, dynamic>.from(orderMap['_meta'] ?? {});
+      if (updatedPending.isNotEmpty) {
+        metaMap['pendingProducts'] = updatedPending;
+      } else {
+        metaMap.remove('pendingProducts');
+      }
+      orderMap['_meta'] = metaMap;
+
+      await box.put(hiveKey, orderMap);
+
+      // For synced table orders: sync the cancel to the server immediately.
+      if (serverId != null) {
+        final detailId = canceled.serverDetailId;
+        if (detailId != null) {
+          if (await AppConnectivity.connectivity()) {
+            // Online: DELETE /orders/{serverId}/items/{detailId} immediately.
+            await SyncService().cancelTableOrderItem(
+              serverId: serverId,
+              orderDetailId: detailId,
+            );
+          } else {
+            // Offline: queue for next SyncService tick via pushPendingCancels.
+            final currentMap =
+                Map<String, dynamic>.from(box.get(hiveKey) as Map);
+            final queueMeta =
+                Map<String, dynamic>.from(currentMap['_meta'] ?? {});
+            final existingCancels = List<dynamic>.from(
+              queueMeta['pendingCancelDetailIds'] ?? [],
+            );
+            existingCancels.add(detailId);
+            queueMeta['pendingCancelDetailIds'] = existingCancels;
+            currentMap['_meta'] = queueMeta;
+            await box.put(hiveKey, currentMap);
+          }
+        } else {
+          // No serverDetailId — item was added offline or detail IDs not yet
+          // parsed from init response. Cancel not synced to backend (known gap).
+          debugPrint(
+            'cancelOrderItem: no serverDetailId for stock $stockId '
+            '(serverId=$serverId). Cancel not synced to backend.',
+          );
+        }
       }
 
       return const ApiResult.success(data: null);

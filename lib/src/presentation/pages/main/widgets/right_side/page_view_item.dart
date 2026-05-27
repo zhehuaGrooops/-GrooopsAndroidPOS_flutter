@@ -37,6 +37,7 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
   late TextEditingController coupon;
   // bill-level discount settings
   bool _billDiscountsLoading = false;
+  bool _isOrdering = false;
   List<DiscountSetting> _billDiscounts = [];
   TextEditingController? _manualBillDiscountController;
   // store per-item discount selection keyed by stable product identifier (stockId/countableId/product id)
@@ -1200,10 +1201,15 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
               ),
               24.verticalSpace,
               LoginButton(
-                isLoading: state.isButtonLoading,
+                isLoading: state.isButtonLoading || _isOrdering,
+                isActive: !state.isButtonLoading && !_isOrdering,
                 title: AppHelpers.getTranslation(TrKeys.order),
                 titleColor: AppStyle.black,
-                onPressed: () async {
+                onPressed: (state.isButtonLoading || _isOrdering)
+                    ? null
+                    : () async {
+                  setState(() => _isOrdering = true);
+                  try {
                   final tablesState = ref.read(tablesProvider);
                   final activeTable = tablesState.activeOrderTable;
 
@@ -1341,6 +1347,9 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
                       finalTotal: displayedTotal,
                     ),
                   );
+                  } finally {
+                    if (mounted) setState(() => _isOrdering = false);
+                  }
                 },
               )
             ],
