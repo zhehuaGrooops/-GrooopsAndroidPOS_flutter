@@ -61,6 +61,7 @@ abstract class OrdersRepository {
   Future<ApiResult<dynamic>> cancelOrderItem({
     required int orderId,
     required int stockId,
+    int? itemIndex,
   });
 
   /// Patches a Hive order with payment finalisation details captured at cashout.

@@ -415,19 +415,7 @@ class SettingsHiveRepository extends SettingsRepository {
   }
 
   @override
-  Future<ApiResult<String?>> generateTransactionID(String prefix) async {
-    try {
-      // Maintain transaction counters locally in Hive per-prefix.
-      final box = await _transactionCountersBox();
-      final key = prefix.replaceAll(' ', '');
-      final current = (box.get(key) as int?) ?? 0;
-      final next = current + 1;
-      await box.put(key, next);
-      final padded = next.toString().padLeft(9, '0');
-      final result = '$prefix-$padded';
-      return ApiResult.success(data: result);
-    } catch (e) {
-      return ApiResult.failure(error: e.toString());
-    }
+  Future<ApiResult<String?>> generateTransactionID(String prefix) {
+    return SettingsSettingsRepositoryImpl().generateTransactionID(prefix);
   }
 }

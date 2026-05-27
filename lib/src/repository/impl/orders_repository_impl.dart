@@ -432,6 +432,7 @@ class OrdersRepositoryImpl extends OrdersRepository {
   Future<ApiResult<dynamic>> cancelOrderItem({
     required int orderId,
     required int stockId,
+    int? itemIndex,
   }) async {
     return const ApiResult.success(data: null);
   }

@@ -121,10 +121,15 @@ class OrderSyncHandler {
           ? '/api/v1/dashboard/$role/orders/init'
           : '/api/v1/dashboard/$role/orders';
 
-      final response = await client.post(
+      final response = await _loggedRequest(
+        'POST',
         url,
-        data: body,
-        options: Options(headers: {'X-Idempotency-Key': key.toString()}),
+        () => client.post(
+          url,
+          data: body,
+          options: Options(headers: {'X-Idempotency-Key': key.toString()}),
+        ),
+        body: body,
       );
 
       final parsed = CreateOrderResponse.fromJson(response.data);
@@ -420,9 +425,13 @@ class OrderSyncHandler {
           return true;
         }
 
-        final response = await client.post(
-          '/api/v1/dashboard/$role/orders/$serverId/reorder',
-          data: {'products': pendingRaw},
+        final reorderUrl = '/api/v1/dashboard/$role/orders/$serverId/reorder';
+        final reorderBody = {'products': pendingRaw};
+        final response = await _loggedRequest(
+          'POST',
+          reorderUrl,
+          () => client.post(reorderUrl, data: reorderBody),
+          body: reorderBody,
         );
 
         // Parse response to store serverDetailIds for newly added items.
@@ -439,9 +448,13 @@ class OrderSyncHandler {
         return true;
       } else {
         // Normal orders: keep legacy PUT (safety — update_pending should not occur).
-        await client.put(
-          '/api/v1/dashboard/$role/orders/$serverId',
-          data: orderBody.toJson(),
+        final updateUrl = '/api/v1/dashboard/$role/orders/$serverId';
+        final updateBody = orderBody.toJson();
+        await _loggedRequest(
+          'PUT',
+          updateUrl,
+          () => client.put(updateUrl, data: updateBody),
+          body: updateBody,
         );
         final updatedMeta = Map<String, dynamic>.from(meta ?? {});
         updatedMeta['syncStatus'] = 'synced';
@@ -548,8 +561,12 @@ class OrderSyncHandler {
             // Table orders: POST /orders/{serverId}/cancel
             // Backend handles stock restoration and status=canceled atomically.
             final role = LocalStorage.getUser()?.role ?? '';
-            await client.post(
-              '/api/v1/dashboard/$role/orders/$serverId/cancel',
+            final voidUrl =
+                '/api/v1/dashboard/$role/orders/$serverId/cancel';
+            await _loggedRequest(
+              'POST',
+              voidUrl,
+              () => client.post(voidUrl),
             );
           } else {
             // Normal orders: existing role-based status endpoint (unchanged).
@@ -644,18 +661,22 @@ class OrderSyncHandler {
       final role = LocalStorage.getUser()?.role ?? '';
       final client = _getClient(requireAuth: true);
 
-      await client.post(
-        '/api/v1/dashboard/$role/orders/$serverId/cashout',
-        data: {
-          'payment_id': paymentId,
-          'paid_amount': paidAmount,
-          'refund_amount': refundAmount,
-          if (billDiscountAmount != null && billDiscountAmount > 0)
-            'bill_discount_amount': billDiscountAmount,
-          if (billDiscountType != null) 'bill_discount_type': billDiscountType,
-          if (billDiscountPercent != null)
-            'bill_discount_percent': billDiscountPercent,
-        },
+      final cashoutUrl = '/api/v1/dashboard/$role/orders/$serverId/cashout';
+      final cashoutBody = {
+        'payment_id': paymentId,
+        'paid_amount': paidAmount,
+        'refund_amount': refundAmount,
+        if (billDiscountAmount != null && billDiscountAmount > 0)
+          'bill_discount_amount': billDiscountAmount,
+        if (billDiscountType != null) 'bill_discount_type': billDiscountType,
+        if (billDiscountPercent != null)
+          'bill_discount_percent': billDiscountPercent,
+      };
+      await _loggedRequest(
+        'POST',
+        cashoutUrl,
+        () => client.post(cashoutUrl, data: cashoutBody),
+        body: cashoutBody,
       );
 
       // Update Hive meta to reflect completed cashout.
@@ -693,8 +714,12 @@ class OrderSyncHandler {
     try {
       final role = LocalStorage.getUser()?.role ?? '';
       final client = _getClient(requireAuth: true);
-      await client.delete(
-        '/api/v1/dashboard/$role/orders/$serverId/items/$orderDetailId',
+      final deleteItemUrl =
+          '/api/v1/dashboard/$role/orders/$serverId/items/$orderDetailId';
+      await _loggedRequest(
+        'DELETE',
+        deleteItemUrl,
+        () => client.delete(deleteItemUrl),
       );
       return true;
     } catch (e, stackTrace) {
@@ -730,8 +755,12 @@ class OrderSyncHandler {
 
         for (final detailId in List<dynamic>.from(pendingCancels)) {
           try {
-            await client.delete(
-              '/api/v1/dashboard/$role/orders/$serverId/items/$detailId',
+            final pendingCancelUrl =
+                '/api/v1/dashboard/$role/orders/$serverId/items/$detailId';
+            await _loggedRequest(
+              'DELETE',
+              pendingCancelUrl,
+              () => client.delete(pendingCancelUrl),
             );
             remaining.remove(detailId);
             processed++;
@@ -768,6 +797,32 @@ class OrderSyncHandler {
         context: 'OrderSyncHandler.pushPendingCancels',
       );
       return false;
+    }
+  }
+
+  // ─────────────────────────── Logging helpers ────────────────────────────────
+
+  /// Wraps a Dio call with request/response logging.
+  /// Prints: method, url, request body, response status + data.
+  Future<Response> _loggedRequest(
+    String method,
+    String url,
+    Future<Response> Function() call, {
+    dynamic body,
+  }) async {
+    debugPrint('┌── [TABLE-ORDER] $method $url');
+    if (body != null) debugPrint('│   REQ : $body');
+    try {
+      final response = await call();
+      debugPrint(
+          '└── [TABLE-ORDER] $method $url → ${response.statusCode}\n'
+          '    RES : ${response.data}');
+      return response;
+    } on DioException catch (e) {
+      debugPrint(
+          '└── [TABLE-ORDER] $method $url ✗ ${e.response?.statusCode}\n'
+          '    ERR : ${e.response?.data ?? e.message}');
+      rethrow;
     }
   }
 
@@ -825,6 +880,11 @@ class OrderSyncHandler {
       bodyMutable['enhanced_products'] = enhancedRaw.map((p) {
         if (p is! Map) return p;
         final pm = Map<String, dynamic>.from(p);
+        // Never overwrite an existing server_detail_id — the item was already
+        // assigned its correct backend detail ID from an earlier sync (e.g. init).
+        // Overwriting causes a reorder's detail IDs to clobber the init item's IDs,
+        // making it impossible to DELETE the correct item when canceling init items.
+        if (pm['server_detail_id'] != null) return pm;
         final stockId = pm['stock_id'] as int?;
         if (stockId != null && detailIdByStockId.containsKey(stockId)) {
           pm['server_detail_id'] = detailIdByStockId[stockId];

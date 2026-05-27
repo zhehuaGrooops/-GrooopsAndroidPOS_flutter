@@ -689,6 +689,7 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
     required int tableId,
     required List<EnhancedProductOrder> enhancedProducts,
     required BuildContext context,
+    String? transactionId,
   }) async {
     final now = DateTime.now();
     final data = OrderBodyData(
@@ -710,6 +711,7 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
       deliveryTime: DateFormat('HH:mm').format(now),
       enhancedProducts: enhancedProducts,
       paidAmount: 0,
+      transactionId: transactionId,
       queueNo: '1'.padLeft(4, '0'),
       createdAt: now.toIso8601String(),
     );

@@ -622,6 +622,7 @@ class OrdersHiveRepository extends OrdersRepository {
   Future<ApiResult<dynamic>> cancelOrderItem({
     required int orderId,
     required int stockId,
+    int? itemIndex,
   }) async {
     try {
       final box = await _box();
@@ -646,7 +647,19 @@ class OrdersHiveRepository extends OrdersRepository {
       final order = OrderHiveModel.fromJson(raw);
       final products = List<EnhancedProductOrder>.from(order.body?.enhancedProducts ?? []);
 
-      final cancelIndex = products.indexWhere((p) => p.stockId == stockId);
+      // Prefer itemIndex when provided (caller knows the exact display position).
+      // This disambiguates when the same stockId appears multiple times
+      // (e.g. init qty=1 followed by a reorder qty=2 of the same product).
+      // Fall back to indexWhere only when itemIndex is absent or out of range.
+      int cancelIndex;
+      if (itemIndex != null &&
+          itemIndex >= 0 &&
+          itemIndex < products.length &&
+          products[itemIndex].stockId == stockId) {
+        cancelIndex = itemIndex;
+      } else {
+        cancelIndex = products.indexWhere((p) => p.stockId == stockId);
+      }
       if (cancelIndex == -1) return const ApiResult.failure(error: 'Item not in order');
 
       final canceled = products.removeAt(cancelIndex);

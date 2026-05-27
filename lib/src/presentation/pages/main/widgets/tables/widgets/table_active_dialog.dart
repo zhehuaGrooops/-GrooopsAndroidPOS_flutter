@@ -75,7 +75,13 @@ class _TableActiveDialogState extends ConsumerState<TableActiveDialog> {
           final orderId = tablesState.tableOrders[tableId];
           if (orderId != null && stockId != null) {
             await ordersRepository.cancelOrderItem(
-                orderId: orderId, stockId: stockId);
+              orderId: orderId,
+              stockId: stockId,
+              // Pass the display-list index so cancelOrderItem can remove the
+              // exact Hive entry. Without this, indexWhere removes the first
+              // match — wrong when same product appears in both init and reorder.
+              itemIndex: index,
+            );
           }
           await LocalStorage.setTableItems(tableId, updated);
 

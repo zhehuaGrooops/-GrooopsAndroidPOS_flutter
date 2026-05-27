@@ -564,53 +564,66 @@ class PriceInfo extends StatelessWidget {
                               return;
                             }
 
-                            // Use new running-number increment endpoint for 'order' module
+                            // TABLE CASHOUT: resolve early to avoid wasting a
+                            // running-number increment — doc no was already
+                            // assigned at init order time.
+                            final cashoutTableId = LocalStorage.getCashoutTableId();
                             String? formattedTransactionId;
-                            String pos = 'POS';
-                            String csh = 'CSH';
-                            final int? numericShopId =
-                                LocalStorage.getUser()?.shop?.id ??
-                                    LocalStorage.getUser()?.invite?.shopId;
-                            final String shopid =
-                                (numericShopId ?? 0).toString();
-                            String terminalId = '';
-                            try {
-                              final termRes =
-                                  await settingsRepository.getTerminalID();
-                              termRes.when(
-                                success: (id) {
-                                  terminalId = id ?? '';
+                            int? cashoutExistingOrderId;
+
+                            if (cashoutTableId != null) {
+                              final tablesState = ref.read(tablesProvider);
+                              cashoutExistingOrderId = tablesState.tableOrders[cashoutTableId];
+                              if (cashoutExistingOrderId == null) {
+                                notifier.setOrderLoading(false);
+                                if (context.mounted) AppHelpers.showSnackBar(context, 'No active order for this table');
+                                return;
+                              }
+                              // Reuse transactionId stored at init order time.
+                              final orderResult = await ordersRepository.fetchOrderById(cashoutExistingOrderId);
+                              orderResult.when(
+                                success: (order) {
+                                  final tid = order.body?.transactionId;
+                                  if (tid != null && tid.isNotEmpty) formattedTransactionId = tid;
                                 },
-                                failure: (err, status) {
-                                  debugPrint('Failed to get terminal id: $err');
+                                failure: (_, __) {},
+                              );
+                            } else {
+                              // NORMAL ORDER: generate new doc no from running-number endpoint.
+                              final int? numericShopId =
+                                  LocalStorage.getUser()?.shop?.id ??
+                                      LocalStorage.getUser()?.invite?.shopId;
+                              final String shopid = (numericShopId ?? 0).toString();
+                              String terminalId = '';
+                              try {
+                                final termRes = await settingsRepository.getTerminalID();
+                                termRes.when(
+                                  success: (id) { terminalId = id ?? ''; },
+                                  failure: (err, status) { debugPrint('Failed to get terminal id: $err'); },
+                                );
+                              } catch (e) {
+                                debugPrint('Error while getting terminal id: $e');
+                              }
+                              final prefix = 'POS-S$shopid-$terminalId-CSH';
+                              final result = await settingsRepository.generateTransactionID(prefix);
+                              result.when(
+                                success: (docNo) {
+                                  if (docNo != null && docNo.isNotEmpty) formattedTransactionId = docNo;
+                                },
+                                failure: (error, statusCode) {
+                                  debugPrint('running-number request error: $error');
                                 },
                               );
-                            } catch (e) {
-                              debugPrint('Error while getting terminal id: $e');
-                            }
-                            final prefix = '$pos-S$shopid-$terminalId-$csh';
-                            final result = await settingsRepository
-                                .generateTransactionID(prefix);
-                            result.when(
-                              success: (docNo) {
-                                if (docNo != null && docNo.isNotEmpty) {
-                                  formattedTransactionId = docNo;
-                                }
-                              },
-                              failure: (error, statusCode) {
-                                debugPrint(
-                                    'running-number request error: $error');
-                              },
-                            );
-                            if (formattedTransactionId == null) {
-                              notifier.setOrderLoading(false);
-                              try {
-                                if (context.mounted) {
-                                  AppHelpers.showSnackBar(context,
-                                      'Failed to obtain doc no from server. Order not created.');
-                                }
-                              } catch (_) {}
-                              return; // abort createOrder when no running number
+                              if (formattedTransactionId == null) {
+                                notifier.setOrderLoading(false);
+                                try {
+                                  if (context.mounted) {
+                                    AppHelpers.showSnackBar(context,
+                                        'Failed to obtain doc no from server. Order not created.');
+                                  }
+                                } catch (_) {}
+                                return;
+                              }
                             }
 
                             // Attach queue number and createdAt timestamp at order creation time.
@@ -634,19 +647,10 @@ class PriceInfo extends StatelessWidget {
                               return;
                             }
 
-                            // TABLE CASHOUT: reuse existing order, skip createOrder
-                            final cashoutTableId = LocalStorage.getCashoutTableId();
                             if (cashoutTableId != null) {
-                              final tablesState = ref.read(tablesProvider);
-                              final existingOrderId = tablesState.tableOrders[cashoutTableId];
-                              if (existingOrderId == null) {
-                                notifier.setOrderLoading(false);
-                                AppHelpers.showSnackBar(context, 'No active order for this table');
-                                return;
-                              }
                               await notifier.cashoutTableOrder(
                                 context: context,
-                                orderId: existingOrderId,
+                                orderId: cashoutExistingOrderId!,
                                 paymentId: bag.selectedPayment?.id ?? 1,
                                 paidAmount: paid,
                                 billDiscountAmount: billDiscountAmount,
