@@ -97,6 +97,52 @@ class OrdersHiveRepository extends OrdersRepository {
           if (updatedOrder != null && updatedOrder is Map) {
             serverId = updatedOrder['_meta']?['serverId'];
           }
+        } else {
+          // Check for 409 TABLE_HAS_ACTIVE_ORDER conflict flagged by pushSingleOrder.
+          final failedEntry = box.get(id);
+          if (failedEntry is Map &&
+              failedEntry['_meta']?['syncStatus'] == 'conflict') {
+            final int? conflictServerId =
+                failedEntry['_meta']?['conflictServerId'] as int?;
+            if (conflictServerId != null) {
+              // Remove the failed local order — items will join the existing server order.
+              await box.delete(id);
+              // Create a minimal skeleton entry so addProductsToOrder can resolve
+              // the conflict order by serverId when the user confirms reorder.
+              final int skeletonKey =
+                  DateTime.now().millisecondsSinceEpoch ~/ 1000 + 1;
+              final skeletonOrder = OrderHiveModel(
+                id: skeletonKey,
+                body: OrderBodyData(
+                  tableId: orderBody.tableId,
+                  deliveryType: orderBody.deliveryType,
+                  enhancedProducts: const [],
+                  address: orderBody.address,
+                  deliveryDate: orderBody.deliveryDate,
+                  deliveryTime: orderBody.deliveryTime,
+                  bagData: orderBody.bagData,
+                  phone: orderBody.phone,
+                  currencyId: orderBody.currencyId,
+                  rate: orderBody.rate,
+                  transactionId: orderBody.transactionId,
+                  queueNo: orderBody.queueNo,
+                  createdAt: orderBody.createdAt,
+                ),
+                paymentId: orderBody.bagData.selectedPayment?.id,
+                status: 'new',
+                totalPrice: 0,
+                meta: OrderMeta(
+                  syncStatus: 'synced',
+                  transactionStatus: 'pending',
+                  updatedAt: DateTime.now().toIso8601String(),
+                  serverId: conflictServerId,
+                ),
+              );
+              await box.put(skeletonKey, skeletonOrder.toJson());
+              return ApiResult.failure(
+                  error: 'TABLE_CONFLICT:$conflictServerId');
+            }
+          }
         }
       }
 

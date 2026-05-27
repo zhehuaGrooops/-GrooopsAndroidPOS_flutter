@@ -690,6 +690,9 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
     required List<EnhancedProductOrder> enhancedProducts,
     required BuildContext context,
     String? transactionId,
+    /// Called when the server returns 409 (table already has an active order).
+    /// [conflictServerId] is the existing server-side order ID.
+    void Function(int conflictServerId)? onConflict,
   }) async {
     final now = DateTime.now();
     final data = OrderBodyData(
@@ -723,6 +726,15 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
         orderId = res.data?.id;
       },
       failure: (failure, status) {
+        // 409 conflict: table already has an active order on the server.
+        if (failure.startsWith('TABLE_CONFLICT:')) {
+          final conflictId =
+              int.tryParse(failure.substring('TABLE_CONFLICT:'.length));
+          if (conflictId != null) {
+            onConflict?.call(conflictId);
+            return;
+          }
+        }
         if (context.mounted) {
           AppHelpers.showSnackBar(context, failure);
         }
@@ -1411,7 +1423,8 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
   }
 
   Future createOrder(BuildContext context, OrderBodyData data,
-      {Function(int orderId)? onSuccess}) async {
+      {Function(int orderId)? onSuccess,
+      void Function(int conflictServerId)? onConflict}) async {
     state = state.copyWith(isOrderLoading: true);
     // final num wallet = state.selectedUser?.wallet?.price ?? 0;
     //Remove this validation as per requested by Client for Enhancement
@@ -1450,6 +1463,17 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
         onSuccess?.call(res.data?.id ?? 0);
       },
       failure: (failure, status) async {
+        // 409 TABLE_HAS_ACTIVE_ORDER — propagate via callback instead of snackbar.
+        if (failure.startsWith('TABLE_CONFLICT:')) {
+          final conflictId =
+              int.tryParse(failure.substring('TABLE_CONFLICT:'.length));
+          if (conflictId != null) {
+            state = state.copyWith(isOrderLoading: false);
+            onConflict?.call(conflictId);
+            return;
+          }
+        }
+
         // Try to parse invalid stock_id from backend error
         final errorString = failure.toString();
         final regExp = RegExp(r'products[ .](\d+)[ .]stock_id');

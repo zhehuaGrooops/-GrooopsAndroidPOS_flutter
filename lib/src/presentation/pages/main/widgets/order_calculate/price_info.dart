@@ -245,6 +245,46 @@ class PriceInfo extends StatelessWidget {
     return null;
   }
 
+  /// Shows "Table has active order" confirmation dialog.
+  /// Returns [true] if user chose to continue, [false]/null if cancelled.
+  static Future<bool?> _showConflictDialog(
+      BuildContext ctx, int conflictServerId) {
+    return showDialog<bool>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Text(
+          AppHelpers.getTranslation('Active Order Detected'),
+          style: GoogleFonts.inter(
+              fontWeight: FontWeight.w600, fontSize: 18.sp),
+        ),
+        content: Text(
+          AppHelpers.getTranslation(
+              'This table already has an active order (#$conflictServerId). '
+              'Do you want to add your items to it?'),
+          style: GoogleFonts.inter(fontSize: 14.sp),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: Text(TrKeys.cancel,
+                style: GoogleFonts.inter(color: AppStyle.red)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppStyle.primary,
+                foregroundColor: AppStyle.white),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: Text(TrKeys.confirm,
+                style: GoogleFonts.inter(color: AppStyle.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // subtotal/service/tax aggregation intentionally omitted here
@@ -831,6 +871,94 @@ class PriceInfo extends StatelessWidget {
                                   tablesNotifier.exitTableOrdering();
                                 }
                               }
+                            },
+                            onConflict: (conflictServerId) async {
+                              // 409 TABLE_HAS_ACTIVE_ORDER fired from normal
+                              // order flow (dine_in with a table selected).
+                              if (!context.mounted) return;
+                              final tableData = state.selectedTable;
+                              final tableId = tableData?.id;
+                              if (tableData == null || tableId == null) return;
+
+                              final confirmed = await _showConflictDialog(
+                                  context, conflictServerId);
+                              if (confirmed != true || !context.mounted) {
+                                return;
+                              }
+
+                              // Add current cart items to the existing order.
+                              // ignore: use_build_context_synchronously
+                              await notifier.reorderDineInOrder(
+                                orderId: conflictServerId,
+                                enhancedProducts: createEnhancedProducts(),
+                                context: context,
+                              );
+
+                              // Map table → existing server order (no timer so
+                              // tables_page timerJustStarted listener stays quiet).
+                              final conflictTablesNotifier =
+                                  ref.read(tablesProvider.notifier);
+                              conflictTablesNotifier.setTableOrderOnly(
+                                  tableId, conflictServerId);
+
+                              await LocalStorage.setCashoutTableId(tableId);
+
+                              if (!context.mounted) return;
+
+                              // Proceed directly to cashout with the payment
+                              // values already entered by the cashier.
+                              // ignore: use_build_context_synchronously
+                              await notifier.cashoutTableOrder(
+                                context: context,
+                                orderId: conflictServerId,
+                                paymentId: bag.selectedPayment?.id ?? 1,
+                                paidAmount: paid,
+                                billDiscountAmount: billDiscountAmount,
+                                billDiscountType:
+                                    bag.selectedBillDiscount?.method,
+                                billDiscountPercent:
+                                    bag.selectedBillDiscount?.value,
+                                roundingAmount: rounding,
+                                refundAmount: refund < 0 ? refund.abs() : 0,
+                                transactionId: formattedTransactionId ?? '',
+                                queueNo:
+                                    counter.toString().padLeft(4, '0'),
+                                onSuccess: (effectiveId) async {
+                                  ref
+                                      .read(newOrdersProvider.notifier)
+                                      .fetchNewOrders(isRefresh: true);
+                                  ref
+                                      .read(acceptedOrdersProvider.notifier)
+                                      .fetchAcceptedOrders(isRefresh: true);
+                                  if (context.mounted &&
+                                      state.paginateResponse != null) {
+                                    showDialog(
+                                      context: context,
+                                      builder: (ctx) => Dialog(
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12.r),
+                                        ),
+                                        child: SizedBox(
+                                          width: 380.w,
+                                          child: GenerateReceiptPage(
+                                            orderId: effectiveId.toString(),
+                                            isKitchen: true,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                    // ignore: use_build_context_synchronously
+                                    await OpenDrawerDialog.openDrawer(context);
+                                  }
+                                  notifier.clearCalculate();
+                                  mainNotifier.setPriceDate(null);
+                                  notifier.removeSelectedTable();
+                                  await LocalStorage.setCashoutTableId(null);
+                                  conflictTablesNotifier
+                                      .clearTableOrder(tableId);
+                                },
+                              );
                             });
                           }
                         : null),

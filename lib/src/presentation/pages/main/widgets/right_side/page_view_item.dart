@@ -1351,12 +1351,44 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
                         return;
                       }
 
+                      int? conflictServerId;
                       final orderId = await rightNotifier.initDineInOrder(
                         tableId: tableId,
                         enhancedProducts: enhancedProducts,
                         context: context,
                         transactionId: initTransactionId,
+                        onConflict: (id) => conflictServerId = id,
                       );
+
+                      // 409 conflict: table already has an active order on server.
+                      if (conflictServerId != null) {
+                        if (!mounted) return;
+                        final confirmed = await _showTableConflictDialog(
+                            context, conflictServerId!);
+                        if (confirmed != true || !mounted) return;
+                        // Add items to existing server order via reorder endpoint.
+                        final ok = await rightNotifier.reorderDineInOrder(
+                          orderId: conflictServerId!,
+                          enhancedProducts: enhancedProducts,
+                          context: context,
+                        );
+                        if (ok == null || !mounted) return;
+                        final existing = LocalStorage.getTableItems(tableId);
+                        await LocalStorage.setTableItems(
+                            tableId, [...existing, ...displayItems]);
+                        // ignore: use_build_context_synchronously
+                        await rightNotifier.printKitchenSlipForReorder(
+                          context,
+                          tableId: tableId,
+                          newItems: displayItems,
+                          tableData: activeTable,
+                        );
+                        tablesNotifier.setTableOrder(tableId, conflictServerId!);
+                        rightNotifier.clearCalculate();
+                        rightNotifier.clearBag();
+                        return;
+                      }
+
                       if (orderId == null || !mounted) return;
                       await LocalStorage.setTableItems(
                           tableId, displayItems);
@@ -1386,6 +1418,53 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Shows a confirmation dialog when the server reports that the selected
+  /// table already has an active order (409 TABLE_HAS_ACTIVE_ORDER).
+  /// Returns `true` if the user confirms adding to the existing order.
+  Future<bool?> _showTableConflictDialog(
+      BuildContext ctx, int conflictServerId) {
+    return showDialog<bool>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Text(
+          AppHelpers.getTranslation('Active Order Detected'),
+          style: GoogleFonts.inter(
+              fontSize: 18.sp, fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          AppHelpers.getTranslation(
+              'This table already has an active order (#$conflictServerId). '
+              'Do you want to add your items to it?'),
+          style: GoogleFonts.inter(fontSize: 14.sp),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: Text(
+              AppHelpers.getTranslation(TrKeys.cancel),
+              style: GoogleFonts.inter(color: AppStyle.red),
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppStyle.primary,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8.r)),
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: Text(
+              AppHelpers.getTranslation(TrKeys.confirm),
+              style: GoogleFonts.inter(color: AppStyle.white),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

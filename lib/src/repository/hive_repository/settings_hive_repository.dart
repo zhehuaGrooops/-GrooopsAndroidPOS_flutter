@@ -1,5 +1,6 @@
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/handlers/handlers.dart';
+import 'package:admin_desktop/src/core/utils/app_connectivity.dart';
 import 'package:admin_desktop/src/models/response/mobile_translations_response.dart';
 import 'package:admin_desktop/src/models/response/sale_history_response.dart';
 import 'package:admin_desktop/src/models/response/sale_cart_response.dart';
@@ -415,7 +416,28 @@ class SettingsHiveRepository extends SettingsRepository {
   }
 
   @override
-  Future<ApiResult<String?>> generateTransactionID(String prefix) {
-    return SettingsSettingsRepositoryImpl().generateTransactionID(prefix);
+  Future<ApiResult<String?>> generateTransactionID(String prefix) async {
+    final isOnline = await AppConnectivity.connectivity();
+    if (isOnline) {
+      final result = await SettingsSettingsRepositoryImpl().generateTransactionID(prefix);
+      // If online but backend call failed, fall through to local fallback below.
+      bool succeeded = false;
+      String? docNo;
+      result.when(
+        success: (data) {
+          if (data != null && data.isNotEmpty) {
+            succeeded = true;
+            docNo = data;
+          }
+        },
+        failure: (_, __) {},
+      );
+      if (succeeded) return ApiResult.success(data: docNo);
+    }
+    // Offline (or online but backend unavailable): generate a locally-unique ID.
+    // Format mirrors server format but uses timestamp to ensure uniqueness.
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final localDocNo = '$prefix-${ts.toString().padLeft(13, '0')}';
+    return ApiResult.success(data: localDocNo);
   }
 }

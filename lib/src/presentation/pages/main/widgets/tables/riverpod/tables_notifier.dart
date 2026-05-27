@@ -26,7 +26,10 @@ class TablesNotifier extends StateNotifier<TablesState> {
 
   initial() async {
     await fetchSectionList(isRefresh: true);
-    fetchTable(isRefresh: true);
+    await fetchTable(isRefresh: true);
+    // Recover active-order associations — server-embedded entries first,
+    // then local Hive pending entries via loadTableStatuses.
+    await loadTableStatuses();
     getWorkingDay();
     getCloseDay();
   }
@@ -260,16 +263,22 @@ class TablesNotifier extends StateNotifier<TablesState> {
     response.when(
       success: (data) {
         final orders = data.data?.orders ?? [];
-        final ids = <int, int>{};
-        final timers = <int, DateTime>{};
+        // Start from what fetchTable() already populated (server-embedded
+        // orders take precedence). putIfAbsent ensures we only add entries
+        // for tables not already tracked (e.g. locally-pending orders that
+        // the server doesn't know about yet).
+        final ids = Map<int, int>.from(state.tableOrders);
+        final timers = Map<int, DateTime>.from(state.tableTimers);
         for (final order in orders) {
+          // order.table?.id is populated from the 'table' object (server
+          // responses) or from the 'table_id' fallback (Hive-stored orders).
           final tableId = order.table?.id;
           final orderId = order.id;
           if (tableId != null && orderId != null) {
-            ids[tableId] = orderId;
-            timers[tableId] = order.createdAt != null
+            ids.putIfAbsent(tableId, () => orderId);
+            timers.putIfAbsent(tableId, () => order.createdAt != null
                 ? DateTime.tryParse(order.createdAt!) ?? DateTime.now()
-                : DateTime.now();
+                : DateTime.now());
           }
         }
         state = state.copyWith(tableOrders: ids, tableTimers: timers);
@@ -286,6 +295,16 @@ class TablesNotifier extends StateNotifier<TablesState> {
     final timers = Map<int, DateTime>.from(state.tableTimers);
     timers.putIfAbsent(tableId, () => DateTime.now());
     state = state.copyWith(tableOrders: orders, tableTimers: timers);
+  }
+
+  /// Maps tableId → orderId in [tableOrders] WITHOUT starting the elapsed
+  /// timer.  Use when navigating directly to cashout (409 conflict resolution)
+  /// so the tables_page timerJustStarted listener does NOT fire
+  /// exitTableOrdering prematurely.
+  void setTableOrderOnly(int tableId, int orderId) {
+    final orders = Map<int, int>.from(state.tableOrders);
+    orders[tableId] = orderId;
+    state = state.copyWith(tableOrders: orders);
   }
 
   void clearTableOrder(int tableId) {
@@ -547,10 +566,32 @@ class TablesNotifier extends StateNotifier<TablesState> {
           }
         }
 
+        // Extract active orders embedded by the backend in table.order.
+        // On refresh, start fresh so tables that no longer have an active
+        // order are cleared. On pagination, preserve existing entries.
+        final updatedOrders = isRefresh
+            ? <int, int>{}
+            : Map<int, int>.from(state.tableOrders);
+        final updatedTimers = isRefresh
+            ? <int, DateTime>{}
+            : Map<int, DateTime>.from(state.tableTimers);
+        for (final t in newTables) {
+          final tableId = t.id;
+          final activeOrder = t.order;
+          if (tableId != null && activeOrder?.id != null) {
+            updatedOrders[tableId] = activeOrder!.id!;
+            updatedTimers[tableId] = activeOrder.createdAt != null
+                ? DateTime.tryParse(activeOrder.createdAt!) ?? DateTime.now()
+                : DateTime.now();
+          }
+        }
+
         state = state.copyWith(
           isLoading: false,
           tableListData: tableListData,
           tablePositions: positions,
+          tableOrders: updatedOrders,
+          tableTimers: updatedTimers,
         );
         await getStatistic(start: start, end: end);
       },

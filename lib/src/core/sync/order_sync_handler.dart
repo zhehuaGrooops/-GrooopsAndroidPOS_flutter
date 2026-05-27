@@ -169,6 +169,28 @@ class OrderSyncHandler {
       }
       return true;
     } catch (ex, stackTrace) {
+      // 409 TABLE_HAS_ACTIVE_ORDER: store conflictServerId in Hive so
+      // OrdersHiveRepository.createOrder() can surface it to the UI.
+      if (ex is DioException && ex.response?.statusCode == 409) {
+        try {
+          final dynamic responseData = ex.response?.data;
+          final dynamic conflictRaw = responseData?['data']?['id'];
+          final int? conflictId = conflictRaw is int
+              ? conflictRaw
+              : int.tryParse(conflictRaw?.toString() ?? '');
+          if (conflictId != null) {
+            final box = await HiveService.openBox(HiveBoxes.orders);
+            if (box.containsKey(key)) {
+              final map = Map<String, dynamic>.from(box.get(key) as Map);
+              final meta = Map<String, dynamic>.from(map['_meta'] ?? {});
+              meta['syncStatus'] = 'conflict';
+              meta['conflictServerId'] = conflictId;
+              map['_meta'] = meta;
+              await box.put(key, map);
+            }
+          }
+        } catch (_) {}
+      }
       // Log the full HTTP response body so backend validation errors are visible.
       final responseBody = (ex is DioException) ? ex.response?.data : null;
       debugPrint(
