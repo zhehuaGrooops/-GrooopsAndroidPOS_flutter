@@ -2,6 +2,7 @@ import 'package:admin_desktop/src/core/constants/constants.dart';
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/db/hive_service.dart';
 import 'package:admin_desktop/src/core/hooks/order_hooks.dart';
+import 'package:admin_desktop/src/core/utils/time_service.dart';
 import 'package:admin_desktop/src/core/utils/utils.dart';
 import 'package:admin_desktop/src/models/data/bag_data.dart';
 import 'package:admin_desktop/src/models/data/order_body_data.dart';
@@ -633,7 +634,7 @@ class PriceInfo extends StatelessWidget {
                               final int? numericShopId =
                                   LocalStorage.getUser()?.shop?.id ??
                                       LocalStorage.getUser()?.invite?.shopId;
-                              final String shopid = (numericShopId ?? 0).toString();
+                              final String shopId = (numericShopId ?? 0).toString();
                               String terminalId = '';
                               try {
                                 final termRes = await settingsRepository.getTerminalID();
@@ -644,7 +645,8 @@ class PriceInfo extends StatelessWidget {
                               } catch (e) {
                                 debugPrint('Error while getting terminal id: $e');
                               }
-                              final prefix = 'POS-S$shopid-$terminalId-CSH';
+                              final date = TimeService.dateFormatDDMMYYYY();
+                              final prefix = 'POS-S$shopId-$terminalId-$date-CSH';
                               final result = await settingsRepository.generateTransactionID(prefix);
                               result.when(
                                 success: (docNo) {

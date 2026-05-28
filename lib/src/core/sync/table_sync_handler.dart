@@ -75,7 +75,7 @@ class TableSyncHandler {
                 data: {
                   if (map['name'] != null) 'name': map['name'],
                   if (map['chair_count'] != null)
-                    'chair_count': map['chair_count']?.toString(),
+                    'chair_count': map['chair_count'],
                   if (map['position_x'] != null)
                     'position_x': map['position_x'],
                   if (map['position_y'] != null)
@@ -200,6 +200,7 @@ class TableSyncHandler {
       );
       final dynamic rawSections = sectionsRes.data['data'];
       final sections = rawSections is List ? rawSections : (rawSections is Map ? rawSections['data'] as List? ?? [] : <dynamic>[]);
+      debugPrint('==> pullTables sections raw response: ${sectionsRes.data}');
 
       // Pull tables
       final tablesRes = await client.get(
@@ -208,7 +209,8 @@ class TableSyncHandler {
       );
       final dynamic rawTables = tablesRes.data['data'];
       final tables = rawTables is List ? rawTables : (rawTables is Map ? rawTables['data'] as List? ?? [] : <dynamic>[]);
-
+      debugPrint('==> pullTables tables raw response: ${tablesRes.data}');
+      debugPrint('==> Pulled ${sections.length} sections and ${tables.length} tables from server');
       // Clear all synced entries before writing fresh backend data.
       // Pending entries (offline mutations not yet pushed) are preserved.
       final keysToDelete = box.keys.where((k) {

@@ -237,7 +237,7 @@ class TableRepositoryIml extends TableRepository {
         '/api/v1/dashboard/${LocalStorage.getUser()?.role}/tables/$id',
         data: {
           if (name != null) 'name': name,
-          if (chairCount != null) 'chair_count': chairCount.toString(),
+          if (chairCount != null) 'chair_count': chairCount,
           if (positionX != null) 'position_x': positionX,
           if (positionY != null) 'position_y': positionY,
         },
