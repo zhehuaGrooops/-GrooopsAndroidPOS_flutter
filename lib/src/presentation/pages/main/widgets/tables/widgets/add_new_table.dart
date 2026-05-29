@@ -89,7 +89,7 @@ class _AddNewTableState extends ConsumerState<AddNewTable> {
                   TableFormField(
                     prefixSvg: Assets.svgAvatar,
                     inputType: TextInputType.number,
-                    validator: ValidatorUtils.validateEmpty,
+                    validator: ValidatorUtils.validateChairCount,
                     hintText: TrKeys.personCount,
                     textEditingController: count,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],

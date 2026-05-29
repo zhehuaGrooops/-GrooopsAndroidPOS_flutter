@@ -27,11 +27,11 @@ class ProductSyncHandler {
   }
 
   /// Pulls products data from the server and updates local Hive storage.
+  /// Fetch succeeds first — box is only cleared and rewritten on success,
+  /// so offline calls leave existing Hive data intact.
   Future<bool> pullProducts() async {
     try {
-      final box = await HiveService.openBox(HiveBoxes.products);
-      await box.clear();
-      // Non-paginated endpoint now returns all products under `data`
+      // Fetch from server before touching the box.
       final data = {
         'lang': LocalStorage.getLanguage()?.locale ?? 'en',
         "status": "published",
@@ -51,10 +51,13 @@ class ProductSyncHandler {
       );
       final parsed = ProductsPaginateResponse.fromJson(response.data);
       final items = parsed.data ?? [];
-      int processed = 0;
 
-      // We'll collect unique pricing tiers from products to populate the pricingTiers box
-      // Using lowercase title as key to prevent duplicates with the same name (e.g. "Member" and "member")
+      // Fetch succeeded — now safe to clear and rewrite the box.
+      final box = await HiveService.openBox(HiveBoxes.products);
+      await box.clear();
+
+      int processed = 0;
+      // Using lowercase title as key to prevent duplicates (e.g. "Member" and "member")
       final Map<String, Map<String, dynamic>> collectedTiers = {};
 
       for (final e in items) {
@@ -62,7 +65,6 @@ class ProductSyncHandler {
         final productJson = e.toJson();
         await box.put(key, productJson);
 
-        // Collect pricing tiers if present
         if (e.productPricingTiers != null) {
           for (final tier in e.productPricingTiers!) {
             final tierTitle = tier.title?.trim();
@@ -79,10 +81,9 @@ class ProductSyncHandler {
           }
         }
 
-        // Precache image
+        // Fire and forget — don't await to avoid slowing down sync.
         if (e.img != null && e.img!.isNotEmpty) {
           try {
-            // Fire and forget - don't await to avoid slowing down sync
             DefaultCacheManager().downloadFile(e.img!);
           } catch (err, stackTrace) {
             debugPrint('Failed to precache image for product ${e.id}: $err');
@@ -96,12 +97,11 @@ class ProductSyncHandler {
         processed++;
       }
 
-      // Populate pricingTiers box from collected tiers
+      // Populate pricingTiers box — also only on success.
       final tbox = await HiveService.openBox(HiveBoxes.pricingTiers);
       await tbox.clear();
       if (collectedTiers.isNotEmpty) {
         for (final tierMap in collectedTiers.values) {
-          // Use ID as key in Hive for efficient lookup, but uniqueness was handled by title above
           await tbox.put(tierMap['id'], tierMap);
         }
       }

@@ -11,4 +11,18 @@ abstract class ValidatorUtils {
       return null;
     }
   }
+
+  static String? validateChairCount(String? input) {
+    if (input == null || input.isEmpty) {
+      return AppHelpers.getTranslation(TrKeys.fieldRequired);
+    }
+    final value = int.tryParse(input);
+    if (value == null || value < 1) {
+      return 'Chair count must be at least 1';
+    }
+    if (value > 100) {
+      return 'Chair count cannot exceed 100';
+    }
+    return null;
+  }
 }

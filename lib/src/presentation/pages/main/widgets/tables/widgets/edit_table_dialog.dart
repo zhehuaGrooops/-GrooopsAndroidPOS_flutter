@@ -90,7 +90,7 @@ class _EditTableDialogState extends ConsumerState<EditTableDialog> {
                   TableFormField(
                     prefixSvg: Assets.svgAvatar,
                     inputType: TextInputType.number,
-                    validator: ValidatorUtils.validateEmpty,
+                    validator: ValidatorUtils.validateChairCount,
                     hintText: TrKeys.personCount,
                     textEditingController: _count,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
