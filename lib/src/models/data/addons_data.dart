@@ -38,7 +38,7 @@ class Addons {
       id: json?["id"],
       stockId: json?["stock_id"],
       addonId: json?["addon_id"],
-      active: true,
+      active: false,
       product: json?["product"] != null
           ? Product.fromJson(json?["product"])
           : json?["countable"] != null
