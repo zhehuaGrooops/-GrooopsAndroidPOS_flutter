@@ -27,7 +27,6 @@ class PaymentSyncHandler {
   /// Pulls payment data from the server and stores it in Hive.
   Future<bool> pullPayments() async {
     try {
-      debugPrint("Pulling payment data from server...");
       final result = await fetchPayments();
 
       return await result.when(
@@ -43,8 +42,6 @@ class PaymentSyncHandler {
           }
 
           reportProgress(processed: payments.length, total: payments.length);
-          debugPrint(
-              "Finished pulling payment data. Processed ${payments.length} items.");
           return true;
         },
         failure: (error, statusCode) {

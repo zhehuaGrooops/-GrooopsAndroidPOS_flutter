@@ -23,12 +23,10 @@ class AddNewSection extends ConsumerStatefulWidget {
 class _AddNewSectionState extends ConsumerState<AddNewSection> {
   final GlobalKey<FormState> formKey = GlobalKey<FormState>();
   late TextEditingController name;
-  late TextEditingController area;
 
   @override
   void initState() {
     name = TextEditingController();
-    area = TextEditingController();
     super.initState();
   }
 
@@ -36,7 +34,6 @@ class _AddNewSectionState extends ConsumerState<AddNewSection> {
   void dispose() {
     super.dispose();
     name.dispose();
-    area.dispose();
   }
 
   @override
@@ -79,13 +76,6 @@ class _AddNewSectionState extends ConsumerState<AddNewSection> {
                     textEditingController: name,
                   ),
                   12.verticalSpace,
-                  TableFormField(
-                    prefixSvg: Assets.svgAreaIcon,
-                    inputType: TextInputType.number,
-                    validator: ValidatorUtils.validateEmpty,
-                    hintText: TrKeys.area,
-                    textEditingController: area,
-                  ),
                   30.verticalSpace,
                   LoginButton(
                       title: AppHelpers.getTranslation(TrKeys.create),
@@ -94,7 +84,7 @@ class _AddNewSectionState extends ConsumerState<AddNewSection> {
                         if (formKey.currentState?.validate() ?? false) {
                           notifier.addNewSection(
                             name: name.text,
-                            area: double.tryParse(area.text) ?? 0,
+                            area: 0,
                             context: context,
                           );
                           context.maybePop();

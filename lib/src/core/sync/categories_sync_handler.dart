@@ -29,8 +29,6 @@ class CategoriesSyncHandler {
   /// Pulls categories data from the server and stores it in Hive.
   Future<bool> pullCategories() async {
     try {
-      debugPrint("Pulling categories data from server...");
-
       // Clear the box first or at the end?
       // Usually better to clear before writing new data if we are doing a full sync.
       // But if fetch fails, we lose data.
@@ -103,8 +101,6 @@ class CategoriesSyncHandler {
       reportProgress(
           processed: allCategories.length,
           total: totalItems > 0 ? totalItems : allCategories.length);
-      debugPrint(
-          "Finished pulling categories data. Processed ${allCategories.length} items.");
       return true;
     } catch (e, stackTrace) {
       debugPrint("Unexpected error during categories sync: $e");

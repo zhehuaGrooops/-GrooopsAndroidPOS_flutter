@@ -20,6 +20,7 @@ import 'faqs_sync_handler.dart';
 import 'product_sync_handler.dart';
 import 'categories_sync_handler.dart';
 import 'discount_setting_sync_handler.dart';
+import 'table_sync_handler.dart';
 
 class SyncService {
   static final SyncService _instance = SyncService._internal();
@@ -35,6 +36,7 @@ class SyncService {
   late ProductSyncHandler _productSyncHandler;
   late CategoriesSyncHandler _categoriesSyncHandler;
   late DiscountSettingSyncHandler _discountSettingSyncHandler;
+  late TableSyncHandler _tableSyncHandler;
 
   SyncService._internal() {
     _orderSyncHandler = OrderSyncHandler(
@@ -62,6 +64,10 @@ class SyncService {
       progressSink: _progress.sink,
     );
     _discountSettingSyncHandler = DiscountSettingSyncHandler(
+      httpService: HttpService(),
+      progressSink: _progress.sink,
+    );
+    _tableSyncHandler = TableSyncHandler(
       httpService: HttpService(),
       progressSink: _progress.sink,
     );
@@ -106,18 +112,28 @@ class SyncService {
       httpService: service,
       progressSink: _progress.sink,
     );
+    _tableSyncHandler = TableSyncHandler(
+      httpService: service,
+      progressSink: _progress.sink,
+    );
   }
 
   Dio _getClient({required bool requireAuth}) {
     return (_mockHttpService ?? HttpService()).client(requireAuth: requireAuth);
   }
 
-  /// Pushes pending orders to the server.
   Future<bool> pushOrders() async {
     final ok = await _orderSyncHandler.pushOrders();
     await _orderSyncHandler.pushTransactions();
     return ok;
   }
+
+  Future<bool> pushOrderUpdates() => _orderSyncHandler.pushPendingOrderUpdates();
+
+  Future<bool> pushOrderUpdate(dynamic key) => _orderSyncHandler.pushOrderUpdate(key);
+
+  Future<bool> updateOrderStatusOnBackend(int serverId, String status) =>
+      _orderSyncHandler.updateOrderStatus(serverId, status);
 
   /// Pushes all pending transactions for synced orders to the server.
   Future<bool> pushTransactions() => _orderSyncHandler.pushTransactions();
@@ -125,6 +141,45 @@ class SyncService {
   /// Pushes a single order to the server.
   Future<bool> pushSingleOrder(dynamic key) =>
       _orderSyncHandler.pushSingleOrder(key);
+
+  /// Pushes all voided (canceled) orders that have not yet been synced.
+  Future<bool> pushVoidedOrders() => _orderSyncHandler.pushVoidedOrders();
+
+  /// Completes payment for a table order via POST /orders/{serverId}/cashout.
+  /// Replaces the old submitPaymentTransaction + updateOrderStatus 2-step flow.
+  Future<bool> cashoutTableOrder({
+    required int serverId,
+    dynamic hiveKey,
+    required int paymentId,
+    required num paidAmount,
+    required num refundAmount,
+    num? billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+  }) =>
+      _orderSyncHandler.cashoutTableOrder(
+        serverId: serverId,
+        hiveKey: hiveKey,
+        paymentId: paymentId,
+        paidAmount: paidAmount,
+        refundAmount: refundAmount,
+        billDiscountAmount: billDiscountAmount,
+        billDiscountType: billDiscountType,
+        billDiscountPercent: billDiscountPercent,
+      );
+
+  /// Removes a single item from an open table order via DELETE /items/{detailId}.
+  Future<bool> cancelTableOrderItem({
+    required int serverId,
+    required int orderDetailId,
+  }) =>
+      _orderSyncHandler.cancelTableOrderItem(
+        serverId: serverId,
+        orderDetailId: orderDetailId,
+      );
+
+  /// Processes item-level cancels queued while offline.
+  Future<bool> pushPendingCancels() => _orderSyncHandler.pushPendingCancels();
 
   /// Pulls payment methods from the server.
   Future<bool> pullPayments() => _paymentSyncHandler.pullPayments();
@@ -135,6 +190,15 @@ class SyncService {
 
   /// Fetches FAQs from the server.
   Future<bool> fetchFaqs() => _faqsSyncHandler.fetchFaqs();
+
+  /// Pushes pending table/section mutations to the server.
+  Future<bool> pushTableChanges() => _tableSyncHandler.pushPendingTables();
+
+  /// Pushes pending table changes then pulls fresh tables and sections from the server.
+  Future<bool> pullTablesFromServer() async {
+    await _tableSyncHandler.pushPendingTables();
+    return _tableSyncHandler.pullTables();
+  }
 
   Future<bool> _isReachable() async {
     try {
@@ -232,7 +296,6 @@ class SyncService {
     _isSyncing = true;
     _status.add(SyncStatus(running: true, completed: false, errors: const []));
     try {
-      debugPrint("Starting Sync Service to pull data from server...");
       final errors = <String>[];
       final ok1 = await _withRetry(() => _pullCurrencies());
       if (!ok1) errors.add('currencies');
@@ -250,8 +313,7 @@ class SyncService {
           total: 0,
           errors: errors));
       _status.add(SyncStatus(running: false, completed: true, errors: errors));
-
-      debugPrint("Finishing Sync Service to pull data from server...");
+      debugPrint('[Sync:prereq] ${errors.isEmpty ? "ok" : "errors: $errors"}');
     } finally {
       _isSyncing = false;
     }
@@ -262,12 +324,15 @@ class SyncService {
     _timer = null;
   }
 
+  /// Manually triggers a full push+pull sync cycle immediately.
+  /// Safe to call while the periodic timer is running — guarded by [_isSyncing].
+  Future<void> runManualSync() => _runOnce();
+
   Future<void> _runOnce() async {
     if (_isSyncing) return;
     _isSyncing = true;
     _status.add(SyncStatus(running: true, completed: false, errors: const []));
     try {
-      debugPrint("Starting Sync Service to pull data from server...");
       final errors = <String>[];
       final ok1 = await _withRetry(() => _pullCurrencies());
       if (!ok1) errors.add('currencies');
@@ -295,6 +360,10 @@ class SyncService {
       final okOpenSession =
           await _withRetry(() => _cashSessionSyncHandler.pushOpenSessions());
       if (!okOpenSession) errors.add('open_sessions');
+      final ok6d = await _withRetry(() => _orderSyncHandler.pushPendingOrderUpdates());
+      if (!ok6d) errors.add('order_updates');
+      final ok6e = await _withRetry(() => _orderSyncHandler.pushPendingCancels());
+      if (!ok6e) errors.add('pending_cancels');
       final ok7 = await _withRetry(() => _orderSyncHandler.pushOrders());
       if (!ok7) errors.add('orders');
       final ok7b = await _withRetry(() => _orderSyncHandler.pushVoidedOrders());
@@ -310,6 +379,10 @@ class SyncService {
       final ok9 = await _withRetry(
           () => _discountSettingSyncHandler.pullDiscountSettings());
       if (!ok9) errors.add('discount_settings');
+      final ok10 = await _withRetry(() => _tableSyncHandler.pushPendingTables());
+      if (!ok10) errors.add('table_push');
+      final ok11 = await _withRetry(() => _tableSyncHandler.pullTables());
+      if (!ok11) errors.add('table_pull');
       _progress.add(SyncProgress(
           phase: 'complete',
           entity: 'all',
@@ -317,8 +390,7 @@ class SyncService {
           total: 0,
           errors: errors));
       _status.add(SyncStatus(running: false, completed: true, errors: errors));
-
-      debugPrint("Finishing Sync Service to pull data from server...");
+      debugPrint('[Sync] ${errors.isEmpty ? "ok" : "errors: $errors"}');
     } finally {
       _isSyncing = false;
     }
@@ -326,7 +398,6 @@ class SyncService {
 
   Future<bool> _pullCurrencies() async {
     try {
-      debugPrint("Pulling currency data from server ...");
       // Original API implementation moved from repository: CurrenciesRepositoryImpl.getCurrencies
       final client = HttpService().client(requireAuth: false);
       final response = await client.get('/api/v1/rest/currencies');
@@ -343,9 +414,6 @@ class SyncService {
           processed: list.length,
           total: list.length,
           errors: const []));
-
-      debugPrint("Finished pull currency data.");
-
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -365,7 +433,6 @@ class SyncService {
 
   Future<bool> _pullSettings() async {
     try {
-      debugPrint("Pulling settings data from server...");
       // Original API implementation moved from repository: SettingsSettingsRepositoryImpl.getGlobalSettings
       final client = HttpService().client(requireAuth: false);
       final settingsResponse = await client.get('/api/v1/rest/settings');
@@ -419,8 +486,6 @@ class SyncService {
         final tbox = await HiveService.openBox(HiveBoxes.translations);
         await tbox.put('translations', trParsed.data ?? {});
       } catch (_) {}
-
-      debugPrint("Finishing pulling settings data from server...");
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -442,7 +507,6 @@ class SyncService {
 
   Future<bool> _pullBrands() async {
     try {
-      debugPrint("Pulling brands data from server...");
       // Original API implementation moved from repository: BrandsRepositoryImpl.searchBrands
       final client = HttpService().client(requireAuth: true);
       final response = await client.get(
@@ -461,7 +525,6 @@ class SyncService {
           processed: parsed.data?.length ?? 0,
           total: parsed.data?.length ?? 0,
           errors: const []));
-      debugPrint("Finished pull brands data from server.");
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -481,7 +544,6 @@ class SyncService {
 
   Future<bool> _pullShops() async {
     try {
-      debugPrint("Pulling shops data from server...");
       // Original API implementation moved from repository: ShopsRepositoryImpl.searchShops
       final data = {
         'lang': LocalStorage.getLanguage()?.locale ?? 'en',
@@ -504,7 +566,6 @@ class SyncService {
           processed: parsed.data?.length ?? 0,
           total: parsed.data?.length ?? 0,
           errors: const []));
-      debugPrint("Finish pull shops data from server...");
       return true;
     } catch (e, stackTrace) {
       _progress.add(SyncProgress(
@@ -513,7 +574,6 @@ class SyncService {
           processed: 0,
           total: 0,
           errors: [e.toString()]));
-      debugPrint("Error pull shops data$e");
       AppHelpers.recordSyncErrorToCrashlytics(
         error: e,
         stackTrace: stackTrace,
@@ -525,7 +585,6 @@ class SyncService {
 
   Future<bool> _pullCurrentUserShop() async {
     try {
-      debugPrint("Pulling current user shop data from server...");
       final client = _getClient(requireAuth: true);
       final response = await client.get(
         '/api/v1/dashboard/${LocalStorage.getUser()?.role}/shops',
@@ -543,7 +602,6 @@ class SyncService {
           processed: parsed.data == null ? 0 : 1,
           total: 1,
           errors: const []));
-      debugPrint("Finished pull current user shop data from server.");
       return true;
     } catch (e, stackTrace) {
       _progress.add(SyncProgress(
@@ -552,7 +610,6 @@ class SyncService {
           processed: 0,
           total: 1,
           errors: [e.toString()]));
-      debugPrint("Error pull current user shop data $e");
       AppHelpers.recordSyncErrorToCrashlytics(
         error: e,
         stackTrace: stackTrace,
@@ -589,7 +646,6 @@ class SyncService {
 
   Future<bool> _pullUsers() async {
     try {
-      debugPrint("Pulling users data from server...");
       final hiveRepository = UsersHiveRepository();
       final users = <UserData>[];
       final result = await _getUsers();
@@ -631,7 +687,6 @@ class SyncService {
           ok = false;
         },
       );
-      debugPrint("Finished pull users data from server.");
       return ok;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(
@@ -667,7 +722,6 @@ class SyncService {
 
   Future<bool> _pullProfileDetails() async {
     try {
-      debugPrint("Pulling profile data from server...");
       final client = HttpService().client(requireAuth: true);
       final response = await client.get('/api/v1/dashboard/user/profile/show');
       final parsed = ProfileResponse.fromJson(response.data);
@@ -685,7 +739,6 @@ class SyncService {
           processed: 1,
           total: 1,
           errors: const []));
-      debugPrint("Finished pull profile data.");
       return true;
     } catch (e, stackTrace) {
       AppHelpers.recordSyncErrorToCrashlytics(

@@ -80,7 +80,13 @@ class OrderData {
     _location = json['location'] != null
         ? LocationData.fromJson(json['location'])
         : null;
-    _table = json['table'] != null ? TableData.fromJson(json['table']) : null;
+    _table = json['table'] != null
+        ? TableData.fromJson(Map<String, dynamic>.from(json['table']))
+        // Hive-stored orders spread body.toRawJson() which has table_id but no
+        // 'table' object. Create a minimal TableData so order.table?.id works.
+        : (json['table_id'] != null
+            ? TableData(id: json['table_id'] as int?)
+            : null);
     _deliveryType = json['delivery_type'];
     _deliveryFee = json['delivery_fee'];
     _deliveryman = json['deliveryman'] != null

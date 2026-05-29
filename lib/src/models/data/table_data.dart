@@ -1,3 +1,29 @@
+/// Minimal active-order snapshot embedded in table list responses.
+/// Uses a dedicated class (not OrderData) to avoid a circular import
+/// between table_data.dart and order_data.dart.
+class TableActiveOrder {
+  final int? id;
+  final String? status;
+  final String? createdAt;
+  final num? totalPrice;
+
+  const TableActiveOrder({
+    this.id,
+    this.status,
+    this.createdAt,
+    this.totalPrice,
+  });
+
+  factory TableActiveOrder.fromJson(Map<String, dynamic> json) {
+    return TableActiveOrder(
+      id: json['id'] as int?,
+      status: json['status'] as String?,
+      createdAt: json['created_at'] as String?,
+      totalPrice: json['total_price'] as num?,
+    );
+  }
+}
+
 class TableData {
   int? id;
   String? name;
@@ -8,6 +34,11 @@ class TableData {
   String? createdAt;
   String? updatedAt;
   ShopSection? shopSection;
+  double? positionX;
+  double? positionY;
+  /// Active order attached by the backend when order status == 'new'. Null
+  /// when the table has no open session. Read-only — never written back.
+  TableActiveOrder? order;
 
   TableData(
       {this.id,
@@ -18,7 +49,10 @@ class TableData {
       this.active,
       this.createdAt,
       this.updatedAt,
-      this.shopSection});
+      this.shopSection,
+      this.positionX,
+      this.positionY,
+      this.order});
 
   TableData.fromJson(Map<String, dynamic> json) {
     id = json['id'];
@@ -30,7 +64,13 @@ class TableData {
     createdAt = json['created_at'];
     updatedAt = json['updated_at'];
     shopSection = json['shop_section'] != null
-        ? ShopSection.fromJson(json['shop_section'])
+        ? ShopSection.fromJson(Map<String, dynamic>.from(json['shop_section']))
+        : null;
+    positionX = (json['position_x'] as num?)?.toDouble();
+    positionY = (json['position_y'] as num?)?.toDouble();
+    order = json['order'] != null
+        ? TableActiveOrder.fromJson(
+            Map<String, dynamic>.from(json['order'] as Map))
         : null;
   }
 
@@ -47,6 +87,9 @@ class TableData {
     if (shopSection != null) {
       data['shop_section'] = shopSection!.toJson();
     }
+    data['position_x'] = positionX;
+    data['position_y'] = positionY;
+    // 'order' is not serialised — populated by server, never sent back.
     return data;
   }
 }
@@ -59,6 +102,8 @@ class ShopSection {
   String? createdAt;
   String? updatedAt;
   Translation? translation;
+  int? mapWidth;
+  int? mapHeight;
 
   ShopSection(
       {this.id,
@@ -67,7 +112,9 @@ class ShopSection {
       this.img,
       this.createdAt,
       this.updatedAt,
-      this.translation});
+      this.translation,
+      this.mapWidth,
+      this.mapHeight});
 
   ShopSection.fromJson(Map<String, dynamic> json) {
     id = json['id'];
@@ -77,8 +124,10 @@ class ShopSection {
     createdAt = json['created_at'];
     updatedAt = json['updated_at'];
     translation = json['translation'] != null
-        ? Translation.fromJson(json['translation'])
+        ? Translation.fromJson(Map<String, dynamic>.from(json['translation']))
         : null;
+    mapWidth = (json['map_width'] as num?)?.toInt();
+    mapHeight = (json['map_height'] as num?)?.toInt();
   }
 
   Map<String, dynamic> toJson() {
@@ -92,6 +141,8 @@ class ShopSection {
     if (translation != null) {
       data['translation'] = translation!.toJson();
     }
+    data['map_width'] = mapWidth;
+    data['map_height'] = mapHeight;
     return data;
   }
 }

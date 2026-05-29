@@ -45,6 +45,7 @@ import 'widgets/orders_table/orders/ready/ready_orders_provider.dart';
 import 'widgets/orders_table/orders_table.dart';
 import 'widgets/profile/edit_profile/edit_profile_page.dart';
 import 'widgets/right_side/riverpod/right_side_provider.dart';
+import 'widgets/tables/riverpod/tables_provider.dart';
 import 'widgets/sale_history/sale_history.dart';
 import 'widgets/settings/settings_page.dart';
 import 'widgets/settings/riverpod/printer_provider.dart';
@@ -75,6 +76,7 @@ class _MainPageState extends ConsumerState<MainPage>
   bool _isCashSessionOpen = false;
   bool _isDrawerActive = false;
   bool _isInitialSyncing = false;
+  bool _isManuallySyncing = false;
 
   late List<IndexedStackChild> list;
   late List<IndexedStackChild> listWaiter;
@@ -277,6 +279,14 @@ class _MainPageState extends ConsumerState<MainPage>
         time++;
       });
     }
+    ref.listen<int>(
+      mainProvider.select((s) => s.selectIndex),
+      (previous, current) {
+        if (current == 0 && previous != null && previous != 0) {
+          ref.read(mainProvider.notifier).refreshProducts(context: context);
+        }
+      },
+    );
     final state = ref.watch(mainProvider);
     final pages = (user?.role == TrKeys.seller || user?.role == TrKeys.admin)
         ? list
@@ -524,6 +534,37 @@ class _MainPageState extends ConsumerState<MainPage>
             //       FlutterRemix.settings_5_line,
             //       color: AppColors.black,
             //     )),
+            _isManuallySyncing
+                ? Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8.r),
+                    child: SizedBox(
+                      width: 20.r,
+                      height: 20.r,
+                      child: const CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppStyle.black,
+                      ),
+                    ),
+                  )
+                : IconButton(
+                    tooltip: 'Sync now',
+                    onPressed: () async {
+                      setState(() => _isManuallySyncing = true);
+                      try {
+                        await SyncService().runManualSync();
+                        if (!mounted) return;
+                        _runInitialLoads();
+                      } finally {
+                        if (mounted) {
+                          setState(() => _isManuallySyncing = false);
+                        }
+                      }
+                    },
+                    icon: const Icon(
+                      FlutterRemix.refresh_line,
+                      color: AppStyle.black,
+                    ),
+                  ),
             IconButton(
                 onPressed: () {
                   showDialog(
@@ -643,6 +684,13 @@ class _MainPageState extends ConsumerState<MainPage>
                   borderRadius: BorderRadius.circular(10.r)),
               child: IconButton(
                 onPressed: () {
+                  final cashoutId = LocalStorage.getCashoutTableId();
+                  if (cashoutId != null) {
+                    LocalStorage.setCashoutTableId(null);
+                    ref.read(mainProvider.notifier).setPriceDate(null);
+                    ref.read(tablesProvider.notifier).exitTableOrdering();
+                    ref.read(rightSideProvider.notifier).clearCalculate();
+                  }
                   ref.read(mainProvider.notifier).changeIndex(3);
                 },
                 icon: SvgPicture.asset(
@@ -1124,6 +1172,13 @@ class _MainPageState extends ConsumerState<MainPage>
                   borderRadius: BorderRadius.circular(10.r)),
               child: IconButton(
                 onPressed: () {
+                  final cashoutId = LocalStorage.getCashoutTableId();
+                  if (cashoutId != null) {
+                    LocalStorage.setCashoutTableId(null);
+                    ref.read(mainProvider.notifier).setPriceDate(null);
+                    ref.read(tablesProvider.notifier).exitTableOrdering();
+                    ref.read(rightSideProvider.notifier).clearCalculate();
+                  }
                   ref.read(mainProvider.notifier).changeIndex(2);
                 },
                 icon: SvgPicture.asset(

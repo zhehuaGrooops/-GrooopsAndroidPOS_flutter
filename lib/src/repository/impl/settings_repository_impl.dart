@@ -331,11 +331,13 @@ class SettingsSettingsRepositoryImpl extends SettingsRepository {
   @override
   Future<ApiResult<String?>> generateTransactionID(String prefix) async {
     try {
+      const txnUrl = '/api/v1/rest/running-number/transaction/increment';
       final client = dioHttp.client(requireAuth: true);
       final body = {"prefix": prefix};
-      final response = await client.post(
-          '/api/v1/rest/running-number/transaction/increment',
-          data: body);
+      debugPrint('┌── [TABLE-ORDER] POST $txnUrl\n│   REQ : $body');
+      final response = await client.post(txnUrl, data: body);
+      debugPrint('└── [TABLE-ORDER] POST $txnUrl → ${response.statusCode}\n'
+          '    RES : ${response.data}');
       int? runningNumber;
       if (response.data is Map && response.data['data'] != null) {
         final d = response.data['data'];

@@ -1,6 +1,7 @@
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/constants/app_constants.dart';
 import 'package:admin_desktop/src/core/handlers/handlers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:admin_desktop/src/models/data/order_data.dart';
 import 'package:admin_desktop/src/models/models.dart';
 import 'package:admin_desktop/src/models/response/orders_paginate_response.dart';
@@ -96,6 +97,52 @@ class OrdersHiveRepository extends OrdersRepository {
           if (updatedOrder != null && updatedOrder is Map) {
             serverId = updatedOrder['_meta']?['serverId'];
           }
+        } else {
+          // Check for 409 TABLE_HAS_ACTIVE_ORDER conflict flagged by pushSingleOrder.
+          final failedEntry = box.get(id);
+          if (failedEntry is Map &&
+              failedEntry['_meta']?['syncStatus'] == 'conflict') {
+            final int? conflictServerId =
+                failedEntry['_meta']?['conflictServerId'] as int?;
+            if (conflictServerId != null) {
+              // Remove the failed local order — items will join the existing server order.
+              await box.delete(id);
+              // Create a minimal skeleton entry so addProductsToOrder can resolve
+              // the conflict order by serverId when the user confirms reorder.
+              final int skeletonKey =
+                  DateTime.now().millisecondsSinceEpoch ~/ 1000 + 1;
+              final skeletonOrder = OrderHiveModel(
+                id: skeletonKey,
+                body: OrderBodyData(
+                  tableId: orderBody.tableId,
+                  deliveryType: orderBody.deliveryType,
+                  enhancedProducts: const [],
+                  address: orderBody.address,
+                  deliveryDate: orderBody.deliveryDate,
+                  deliveryTime: orderBody.deliveryTime,
+                  bagData: orderBody.bagData,
+                  phone: orderBody.phone,
+                  currencyId: orderBody.currencyId,
+                  rate: orderBody.rate,
+                  transactionId: orderBody.transactionId,
+                  queueNo: orderBody.queueNo,
+                  createdAt: orderBody.createdAt,
+                ),
+                paymentId: orderBody.bagData.selectedPayment?.id,
+                status: 'new',
+                totalPrice: 0,
+                meta: OrderMeta(
+                  syncStatus: 'synced',
+                  transactionStatus: 'pending',
+                  updatedAt: DateTime.now().toIso8601String(),
+                  serverId: conflictServerId,
+                ),
+              );
+              await box.put(skeletonKey, skeletonOrder.toJson());
+              return ApiResult.failure(
+                  error: 'TABLE_CONFLICT:$conflictServerId');
+            }
+          }
         }
       }
 
@@ -179,6 +226,14 @@ class OrdersHiveRepository extends OrdersRepository {
       final filtered = items.where((e) {
         final s = e.status ?? '';
         final matchesStatus = status == null || s == _statusText(status);
+        // Voided orders (old data pre-fix may still have status='new').
+        if (e.isVoided == true) return false;
+        // Conflict skeletons: created by createOrder on 409, have syncStatus='synced',
+        // empty products, and totalPrice=0. Never represent a real active order.
+        final isConflictSkeleton = e.meta?.syncStatus == 'synced' &&
+            (e.body?.enhancedProducts?.isEmpty ?? true) &&
+            (e.totalPrice ?? 0) == 0;
+        if (isConflictSkeleton) return false;
         final title = (e.body?.note ?? '').toString().toLowerCase();
         final matchesQuery =
             search == null || title.contains(search.toLowerCase());
@@ -402,6 +457,7 @@ class OrdersHiveRepository extends OrdersRepository {
       final updated = Map<String, dynamic>.from(raw);
       updated['is_voided'] = true;
       updated['sync_voided'] = false;
+      updated['status'] = 'canceled';
 
       final body = updated['body'];
       if (body is Map) {
@@ -412,6 +468,14 @@ class OrdersHiveRepository extends OrdersRepository {
       }
 
       await box.put(hiveKey, updated);
+
+      // Immediate online sync — don't wait for 2-min SyncService tick.
+      // pushVoidedOrders filters by serverId != null internally, safe to call always.
+      final serverId = raw['_meta']?['serverId'];
+      if (serverId != null && await AppConnectivity.connectivity()) {
+        await SyncService().pushVoidedOrders();
+      }
+
       return const ApiResult.success(data: null);
     } catch (e) {
       return ApiResult.failure(error: e.toString());
@@ -491,6 +555,391 @@ class OrdersHiveRepository extends OrdersRepository {
       return ApiResult.failure(
         error: 'Hive database access failed: $e',
       );
+    }
+  }
+
+  @override
+  Future<ApiResult<dynamic>> addProductsToOrder({
+    required int orderId,
+    required List<EnhancedProductOrder> newItems,
+  }) async {
+    try {
+      final box = await _box();
+
+      dynamic hiveKey;
+      Map<String, dynamic>? raw;
+      for (final entry in box.toMap().entries) {
+        final val = entry.value;
+        if (val is Map) {
+          final id = val['id'];
+          final meta = val['_meta'] as Map?;
+          final serverId = meta?['serverId'];
+          if (id == orderId || serverId == orderId) {
+            hiveKey = entry.key;
+            raw = Map<String, dynamic>.from(val);
+            break;
+          }
+        }
+      }
+      if (raw == null) return const ApiResult.failure(error: 'Order not found');
+
+      final order = OrderHiveModel.fromJson(raw);
+      final existing = List<EnhancedProductOrder>.from(order.body?.enhancedProducts ?? []);
+
+      for (final p in newItems) {
+        await productsRepository.deductProductStock(p.stockId, p.quantity);
+        if (p.addons != null) {
+          for (final a in p.addons!) {
+            if (a.countableId != null) {
+              await productsRepository.deductAddonStock(a.countableId!, a.quantity);
+            }
+          }
+        }
+      }
+
+      final allProducts = [...existing, ...newItems];
+      num newTotal = allProducts.fold<num>(0, (s, p) => s + p.finalPrice);
+      newTotal -= (order.body?.billDiscountAmount ?? 0);
+      newTotal += (order.body?.roundingAmount ?? 0);
+
+      final updatedBody = OrderBodyData(
+        id: order.body?.id,
+        note: order.body?.note,
+        userId: order.body?.userId,
+        deliveryFee: order.body?.deliveryFee,
+        currencyId: order.body?.currencyId,
+        tableId: order.body?.tableId,
+        rate: order.body?.rate,
+        deliveryType: order.body?.deliveryType ?? 'dine_in',
+        phone: order.body?.phone,
+        coupon: order.body?.coupon,
+        location: order.body?.location,
+        address: order.body?.address ?? AddressModel(),
+        deliveryDate: order.body?.deliveryDate ?? '',
+        deliveryTime: order.body?.deliveryTime ?? '',
+        bagData: order.body?.bagData ?? BagData(),
+        enhancedProducts: allProducts,
+        billDiscountAmount: order.body?.billDiscountAmount,
+        billDiscountType: order.body?.billDiscountType,
+        billDiscountPercent: order.body?.billDiscountPercent,
+        transactionId: order.body?.transactionId,
+        queueNo: order.body?.queueNo,
+        createdAt: order.body?.createdAt,
+        roundingAmount: order.body?.roundingAmount,
+        paidAmount: order.body?.paidAmount,
+        refundAmount: order.body?.refundAmount,
+      );
+
+      final serverId = order.meta?.serverId;
+      final newSyncStatus = serverId != null ? 'update_pending' : 'pending';
+
+      final orderMap = OrderHiveModel(
+        id: order.id,
+        body: updatedBody,
+        paymentId: order.paymentId,
+        status: order.status,
+        detailStatus: order.detailStatus,
+        totalPrice: newTotal,
+        userSnapshot: order.userSnapshot,
+        shopSnapshot: order.shopSnapshot,
+        meta: OrderMeta(
+          syncStatus: newSyncStatus,
+          transactionStatus: order.meta?.transactionStatus,
+          updatedAt: DateTime.now().toIso8601String(),
+          serverId: serverId,
+        ),
+      ).toJson();
+
+      // Append newItems to _meta.pendingProducts so pushOrderUpdate sends only
+      // the new items via POST /reorder (not the full product list).
+      final metaMap = Map<String, dynamic>.from(orderMap['_meta'] ?? {});
+      final existingPending =
+          List<dynamic>.from(raw['_meta']?['pendingProducts'] ?? []);
+      metaMap['pendingProducts'] = [
+        ...existingPending,
+        ...newItems.map((p) => p.toJson()),
+      ];
+      orderMap['_meta'] = metaMap;
+
+      await box.put(hiveKey, orderMap);
+
+      if (newSyncStatus == 'update_pending' && await AppConnectivity.connectivity()) {
+        await SyncService().pushOrderUpdate(hiveKey);
+      }
+
+      return const ApiResult.success(data: null);
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
+    }
+  }
+
+  @override
+  Future<ApiResult<dynamic>> cancelOrderItem({
+    required int orderId,
+    required int stockId,
+    int? itemIndex,
+  }) async {
+    try {
+      final box = await _box();
+
+      dynamic hiveKey;
+      Map<String, dynamic>? raw;
+      for (final entry in box.toMap().entries) {
+        final val = entry.value;
+        if (val is Map) {
+          final id = val['id'];
+          final meta = val['_meta'] as Map?;
+          final serverId = meta?['serverId'];
+          if (id == orderId || serverId == orderId) {
+            hiveKey = entry.key;
+            raw = Map<String, dynamic>.from(val);
+            break;
+          }
+        }
+      }
+      if (raw == null) return const ApiResult.failure(error: 'Order not found');
+
+      final order = OrderHiveModel.fromJson(raw);
+      final products = List<EnhancedProductOrder>.from(order.body?.enhancedProducts ?? []);
+
+      // Prefer itemIndex when provided (caller knows the exact display position).
+      // This disambiguates when the same stockId appears multiple times
+      // (e.g. init qty=1 followed by a reorder qty=2 of the same product).
+      // Fall back to indexWhere only when itemIndex is absent or out of range.
+      int cancelIndex;
+      if (itemIndex != null &&
+          itemIndex >= 0 &&
+          itemIndex < products.length &&
+          products[itemIndex].stockId == stockId) {
+        cancelIndex = itemIndex;
+      } else {
+        cancelIndex = products.indexWhere((p) => p.stockId == stockId);
+      }
+      if (cancelIndex == -1) return const ApiResult.failure(error: 'Item not in order');
+
+      final canceled = products.removeAt(cancelIndex);
+
+      await productsRepository.addProductStock(canceled.stockId, canceled.quantity);
+      if (canceled.addons != null) {
+        for (final a in canceled.addons!) {
+          if (a.countableId != null) {
+            await productsRepository.addAddonStock(a.countableId!, a.quantity);
+          }
+        }
+      }
+
+      num newTotal = products.fold<num>(0, (s, p) => s + p.finalPrice);
+      newTotal -= (order.body?.billDiscountAmount ?? 0);
+      newTotal += (order.body?.roundingAmount ?? 0);
+
+      final updatedBody = OrderBodyData(
+        id: order.body?.id,
+        note: order.body?.note,
+        userId: order.body?.userId,
+        deliveryFee: order.body?.deliveryFee,
+        currencyId: order.body?.currencyId,
+        tableId: order.body?.tableId,
+        rate: order.body?.rate,
+        deliveryType: order.body?.deliveryType ?? 'dine_in',
+        phone: order.body?.phone,
+        coupon: order.body?.coupon,
+        location: order.body?.location,
+        address: order.body?.address ?? AddressModel(),
+        deliveryDate: order.body?.deliveryDate ?? '',
+        deliveryTime: order.body?.deliveryTime ?? '',
+        bagData: order.body?.bagData ?? BagData(),
+        enhancedProducts: products,
+        billDiscountAmount: order.body?.billDiscountAmount,
+        billDiscountType: order.body?.billDiscountType,
+        billDiscountPercent: order.body?.billDiscountPercent,
+        transactionId: order.body?.transactionId,
+        queueNo: order.body?.queueNo,
+        createdAt: order.body?.createdAt,
+        roundingAmount: order.body?.roundingAmount,
+        paidAmount: order.body?.paidAmount,
+        refundAmount: order.body?.refundAmount,
+      );
+
+      final serverId = order.meta?.serverId;
+
+      // For cancels: keep the order's current syncStatus.
+      // If order never synced (serverId==null), item won't be in the init call — correct.
+      // If order is synced (serverId!=null), we handle via DELETE /items/{detailId} below.
+      final keepSyncStatus = order.meta?.syncStatus ?? 'pending';
+
+      // Also remove the canceled item from _meta.pendingProducts if it was
+      // added in a reorder that hasn't synced yet — prevents sending it via reorder.
+      final rawMeta = raw['_meta'] as Map?;
+      List<dynamic> updatedPending = List<dynamic>.from(
+        rawMeta?['pendingProducts'] ?? [],
+      );
+      updatedPending.removeWhere((p) {
+        if (p is Map) return p['stock_id'] == stockId;
+        return false;
+      });
+
+      final orderMap = OrderHiveModel(
+        id: order.id,
+        body: updatedBody,
+        paymentId: order.paymentId,
+        status: order.status,
+        detailStatus: order.detailStatus,
+        totalPrice: newTotal,
+        userSnapshot: order.userSnapshot,
+        shopSnapshot: order.shopSnapshot,
+        meta: OrderMeta(
+          syncStatus: keepSyncStatus,
+          transactionStatus: order.meta?.transactionStatus,
+          updatedAt: DateTime.now().toIso8601String(),
+          serverId: serverId,
+        ),
+      ).toJson();
+
+      // Preserve pendingProducts (minus canceled item).
+      final metaMap = Map<String, dynamic>.from(orderMap['_meta'] ?? {});
+      if (updatedPending.isNotEmpty) {
+        metaMap['pendingProducts'] = updatedPending;
+      } else {
+        metaMap.remove('pendingProducts');
+      }
+      orderMap['_meta'] = metaMap;
+
+      await box.put(hiveKey, orderMap);
+
+      // For synced table orders: sync the cancel to the server immediately.
+      if (serverId != null) {
+        final detailId = canceled.serverDetailId;
+        if (detailId != null) {
+          if (await AppConnectivity.connectivity()) {
+            // Online: DELETE /orders/{serverId}/items/{detailId} immediately.
+            await SyncService().cancelTableOrderItem(
+              serverId: serverId,
+              orderDetailId: detailId,
+            );
+          } else {
+            // Offline: queue for next SyncService tick via pushPendingCancels.
+            final currentMap =
+                Map<String, dynamic>.from(box.get(hiveKey) as Map);
+            final queueMeta =
+                Map<String, dynamic>.from(currentMap['_meta'] ?? {});
+            final existingCancels = List<dynamic>.from(
+              queueMeta['pendingCancelDetailIds'] ?? [],
+            );
+            existingCancels.add(detailId);
+            queueMeta['pendingCancelDetailIds'] = existingCancels;
+            currentMap['_meta'] = queueMeta;
+            await box.put(hiveKey, currentMap);
+          }
+        } else {
+          // No serverDetailId — item was added offline or detail IDs not yet
+          // parsed from init response. Cancel not synced to backend (known gap).
+          debugPrint(
+            'cancelOrderItem: no serverDetailId for stock $stockId '
+            '(serverId=$serverId). Cancel not synced to backend.',
+          );
+        }
+      }
+
+      return const ApiResult.success(data: null);
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
+    }
+  }
+
+  @override
+  Future<ApiResult<dynamic>> finalizeOrderPayment({
+    required int orderId,
+    required num paidAmount,
+    required num billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+    required num roundingAmount,
+    required num refundAmount,
+    required String transactionId,
+    required String queueNo,
+  }) async {
+    try {
+      final box = await _box();
+
+      dynamic hiveKey;
+      Map<String, dynamic>? raw;
+      for (final entry in box.toMap().entries) {
+        final val = entry.value;
+        if (val is Map) {
+          final id = val['id'];
+          final meta = val['_meta'] as Map?;
+          final serverId = meta?['serverId'];
+          if (id == orderId || serverId == orderId) {
+            hiveKey = entry.key;
+            raw = Map<String, dynamic>.from(val);
+            break;
+          }
+        }
+      }
+      if (raw == null) return const ApiResult.failure(error: 'Order not found');
+
+      final order = OrderHiveModel.fromJson(raw);
+
+      final updatedBody = OrderBodyData(
+        id: order.body?.id,
+        note: order.body?.note,
+        userId: order.body?.userId,
+        deliveryFee: order.body?.deliveryFee,
+        currencyId: order.body?.currencyId,
+        tableId: order.body?.tableId,
+        rate: order.body?.rate,
+        deliveryType: order.body?.deliveryType ?? 'dine_in',
+        phone: order.body?.phone,
+        coupon: order.body?.coupon,
+        location: order.body?.location,
+        address: order.body?.address ?? AddressModel(),
+        deliveryDate: order.body?.deliveryDate ?? '',
+        deliveryTime: order.body?.deliveryTime ?? '',
+        bagData: order.body?.bagData ?? BagData(),
+        enhancedProducts: order.body?.enhancedProducts,
+        billDiscountAmount: billDiscountAmount,
+        billDiscountType: billDiscountType ?? order.body?.billDiscountType,
+        billDiscountPercent:
+            billDiscountPercent ?? order.body?.billDiscountPercent,
+        transactionId: transactionId,
+        queueNo: queueNo,
+        createdAt: order.body?.createdAt,
+        roundingAmount: roundingAmount,
+        paidAmount: paidAmount,
+        refundAmount: refundAmount,
+      );
+
+      // Recalculate locked total with cashout-time bill discount + rounding.
+      final products = order.body?.enhancedProducts ?? [];
+      num newTotal = products.fold<num>(0, (s, p) => s + p.finalPrice);
+      newTotal = (newTotal - billDiscountAmount + roundingAmount)
+          .clamp(0, double.infinity);
+
+      final serverId = order.meta?.serverId;
+
+      await box.put(
+        hiveKey,
+        OrderHiveModel(
+          id: order.id,
+          body: updatedBody,
+          paymentId: order.paymentId,
+          status: 'delivered',
+          detailStatus: order.detailStatus,
+          totalPrice: newTotal,
+          userSnapshot: order.userSnapshot,
+          shopSnapshot: order.shopSnapshot,
+          meta: OrderMeta(
+            syncStatus: order.meta?.syncStatus ?? 'pending',
+            transactionStatus: order.meta?.transactionStatus,
+            updatedAt: DateTime.now().toIso8601String(),
+            serverId: serverId,
+          ),
+        ).toJson(),
+      );
+
+      return const ApiResult.success(data: null);
+    } catch (e) {
+      return ApiResult.failure(error: e.toString());
     }
   }
 

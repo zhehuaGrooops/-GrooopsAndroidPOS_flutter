@@ -255,4 +255,79 @@ abstract class LocalStorage {
         _preferences?.getString(AppConstants.keyQueueDate) ?? '';
     return {'counter': counter, 'date': date};
   }
+
+  // ── Per-table pending order items (local hold before cashout) ─────────────
+
+  static List<Map<String, dynamic>> getTableItems(int tableId) {
+    final raw = _preferences?.getString('table_items_$tableId');
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw) as List;
+      return decoded
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static List<Map<String, dynamic>> getAllActiveTableItems() {
+    final keys = _preferences?.getKeys() ?? <String>{};
+    final result = <Map<String, dynamic>>[];
+    for (final key in keys) {
+      if (key.startsWith('table_items_')) {
+        final raw = _preferences?.getString(key);
+        if (raw != null && raw.isNotEmpty) {
+          try {
+            result.addAll((jsonDecode(raw) as List)
+                .map((e) => Map<String, dynamic>.from(e as Map)));
+          } catch (_) {}
+        }
+      }
+    }
+    return result;
+  }
+
+  static Future<void> setTableItems(
+      int tableId, List<Map<String, dynamic>> items) async {
+    await _preferences?.setString('table_items_$tableId', jsonEncode(items));
+  }
+
+  static Future<void> clearTableItems(int tableId) async {
+    await _preferences?.remove('table_items_$tableId');
+  }
+
+  static int? getCashoutTableId() {
+    final v = _preferences?.getInt('cashout_table_id');
+    return (v == null || v == -1) ? null : v;
+  }
+
+  static Future<void> setCashoutTableId(int? tableId) async {
+    await _preferences?.setInt('cashout_table_id', tableId ?? -1);
+  }
+
+  static int? getActiveOrderingTableId() {
+    final v = _preferences?.getInt('active_ordering_table_id');
+    return (v == null || v == -1) ? null : v;
+  }
+
+  static Future<void> setActiveOrderingTableId(int? tableId) async {
+    await _preferences?.setInt('active_ordering_table_id', tableId ?? -1);
+  }
+
+  static Future<void> setUseOrderHooks(bool v) async =>
+      await _preferences?.setBool(AppConstants.keyUseOrderHooks, v);
+
+  static bool getUseOrderHooks() =>
+      _preferences?.getBool(AppConstants.keyUseOrderHooks) ?? false;
+
+  static Map<String, dynamic>? getSelectedCurrencyJson() {
+    final raw = _preferences?.getString(AppConstants.keySelectedCurrency);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    } catch (_) {
+      return null;
+    }
+  }
 }

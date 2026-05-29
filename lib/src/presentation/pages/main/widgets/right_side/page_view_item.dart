@@ -1,4 +1,5 @@
 // 'app_helpers.dart' functions are available via utils.dart import below
+import 'package:admin_desktop/src/core/utils/time_service.dart';
 import 'package:admin_desktop/src/presentation/components/buttons/animation_button_effect.dart';
 import 'package:admin_desktop/src/presentation/components/list_items/product_bag_item.dart';
 import 'package:admin_desktop/src/presentation/pages/main/widgets/right_side/note_dialog.dart';
@@ -21,6 +22,8 @@ import '../../../../components/components.dart';
 import '../../../../theme/theme.dart';
 import 'riverpod/right_side_provider.dart';
 import '../../riverpod/provider/main_provider.dart';
+import '../tables/riverpod/tables_provider.dart';
+import '../../../../../core/hooks/order_hooks.dart';
 
 class PageViewItem extends ConsumerStatefulWidget {
   final BagData bag;
@@ -35,6 +38,7 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
   late TextEditingController coupon;
   // bill-level discount settings
   bool _billDiscountsLoading = false;
+  bool _isOrdering = false;
   List<DiscountSetting> _billDiscounts = [];
   TextEditingController? _manualBillDiscountController;
   // store per-item discount selection keyed by stable product identifier (stockId/countableId/product id)
@@ -1198,25 +1202,264 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
               ),
               24.verticalSpace,
               LoginButton(
-                isLoading: state.isButtonLoading,
+                isLoading: state.isButtonLoading || _isOrdering,
+                isActive: !state.isButtonLoading && !_isOrdering,
                 title: AppHelpers.getTranslation(TrKeys.order),
                 titleColor: AppStyle.black,
-                onPressed: () {
-                  final num totalDiscount = itemLevelDiscount + couponPrice;
-                  AppHelpers.showAlertDialog(
-                    context: context,
-                    child: OrderInformation(
-                      subtotal: subtotalBeforeBill,
-                      totalDiscount: totalDiscount,
-                      finalTotal: displayedTotal,
-                    ),
-                  );
-                },
+                onPressed: (state.isButtonLoading || _isOrdering)
+                    ? null
+                    : () async {
+                        setState(() => _isOrdering = true);
+                        try {
+                          final tablesState = ref.read(tablesProvider);
+                          final activeTable = tablesState.activeOrderTable;
+
+                          if (activeTable != null) {
+                            final tableId = activeTable.id ?? 0;
+                            final isReorder =
+                                tablesState.tableTimers.containsKey(tableId);
+                            final tablesNotifier =
+                                ref.read(tablesProvider.notifier);
+                            final rightNotifier =
+                                ref.read(rightSideProvider.notifier);
+
+                            final stocks = state.paginateResponse?.stocks ?? [];
+
+                            // Use OrderCalculationHook for SC/tax/discount — same
+                            // logic as normal order flow, all 5 order types supported.
+                            final hooks = OrderHooks();
+                            final bagProds =
+                                state.bags[state.selectedBagIndex].bagProducts;
+                            final calcResult =
+                                await hooks.calculation.calculate(
+                              stocks: stocks,
+                              orderType: state.orderType,
+                              bagProducts: bagProds,
+                            );
+                            final enhancedProducts =
+                                hooks.enhancedProduct.build(
+                              stocks: stocks,
+                              calculationData: calcResult.calculationData,
+                              orderType: state.orderType,
+                            );
+
+                            // Lightweight display map for LocalStorage.setTableItems
+                            // (used by TableActiveDialog to show items in active order).
+                            // Use stockId-keyed lookup from calculationData (same approach
+                            // as EnhancedProductHook) so SC/tax amounts are correct even
+                            // when stocks from the same category are non-contiguous.
+                            final calcByStockIdDisplay =
+                                <int, Map<String, dynamic>>{};
+                            for (final entry in calcResult.calculationData) {
+                              if (entry.containsKey('billDiscountAmount'))
+                                continue;
+                              final sid = entry['stockId'];
+                              if (sid == null) continue;
+                              final key =
+                                  sid is int ? sid : (sid as num).toInt();
+                              calcByStockIdDisplay[key] = entry;
+                            }
+
+                            final displayItems =
+                                List.generate(stocks.length, (i) {
+                              final stock = stocks[i];
+                              final qty = stock.quantity ?? 1;
+                              final unitPrice = stock.stock?.price ?? 0;
+                              final addonsTotal = (stock.addons ?? [])
+                                  .fold<num>(0, (s, a) => s + (a.price ?? 0));
+                              final total = (unitPrice * qty) + addonsTotal;
+                              final stockId = stock.stock?.id;
+                              final cd = stockId != null
+                                  ? (calcByStockIdDisplay[stockId] ??
+                                      <String, dynamic>{})
+                                  : <String, dynamic>{};
+                              return <String, dynamic>{
+                                'stockId': stockId ?? 0,
+                                'countableId': stock.stock?.countableId,
+                                'uuid': stock.stock?.product?.uuid,
+                                'productName':
+                                    stock.stock?.product?.translation?.title ??
+                                        '',
+                                'quantity': qty,
+                                'totalPrice': total,
+                                'taxAmount': cd['taxAmount'] ?? 0,
+                                'serviceChargeAmount':
+                                    cd['serviceChargeAmount'] ?? 0,
+                                'taxPercent': cd['taxPercent'] ?? 0,
+                                'serviceChargePercent':
+                                    cd['serviceChargePercent'] ?? 0,
+                                'serviceChargeType':
+                                    cd['serviceChargeType'] ?? '',
+                                'categoryId':
+                                    stock.stock?.product?.category?.id,
+                                'categoryName': stock.stock?.product?.category
+                                    ?.translation?.title,
+                                'addonNames': (stock.addons ?? [])
+                                    .map((a) =>
+                                        a.product?.translation?.title ?? '')
+                                    .where((s) => s.isNotEmpty)
+                                    .toList(),
+                                'addons': (stock.addons ?? [])
+                                    .map((a) => <String, dynamic>{
+                                          'stockId': a.id ?? 0,
+                                          'countableId': a.stockId,
+                                          'quantity': a.quantity ?? 1,
+                                          'price': a.price ?? 0,
+                                        })
+                                    .toList(),
+                              };
+                            });
+
+                            if (enhancedProducts.isEmpty) return;
+
+                            if (isReorder) {
+                              final existingOrderId =
+                                  tablesState.tableOrders[tableId];
+                              if (existingOrderId == null) return;
+                              final ok = await rightNotifier.reorderDineInOrder(
+                                orderId: existingOrderId,
+                                enhancedProducts: enhancedProducts,
+                                context: context,
+                              );
+                              if (ok == null || !mounted) return;
+                              final existing =
+                                  LocalStorage.getTableItems(tableId);
+                              await LocalStorage.setTableItems(
+                                  tableId, [...existing, ...displayItems]);
+                              await rightNotifier.printKitchenSlipForReorder(
+                                context,
+                                tableId: tableId,
+                                newItems: displayItems,
+                                tableData: activeTable,
+                              );
+                              rightNotifier.clearCalculate();
+                              rightNotifier.clearBag();
+                              tablesNotifier.exitTableOrdering();
+                              if (mounted) ref.read(mainProvider.notifier).refreshProducts(context: context);
+                            } else {
+                              String? initTransactionId;
+
+                              int? conflictServerId;
+                              final orderId =
+                                  await rightNotifier.initDineInOrder(
+                                tableId: tableId,
+                                enhancedProducts: enhancedProducts,
+                                context: context,
+                                transactionId: initTransactionId,
+                                onConflict: (id) => conflictServerId = id,
+                              );
+
+                              // 409 conflict: table already has an active order on server.
+                              if (conflictServerId != null) {
+                                if (!mounted) return;
+                                final confirmed =
+                                    await _showTableConflictDialog(
+                                        context, conflictServerId!);
+                                if (confirmed != true || !mounted) return;
+                                // Add items to existing server order via reorder endpoint.
+                                final ok =
+                                    await rightNotifier.reorderDineInOrder(
+                                  orderId: conflictServerId!,
+                                  enhancedProducts: enhancedProducts,
+                                  context: context,
+                                );
+                                if (ok == null || !mounted) return;
+                                final existing =
+                                    LocalStorage.getTableItems(tableId);
+                                await LocalStorage.setTableItems(
+                                    tableId, [...existing, ...displayItems]);
+                                // ignore: use_build_context_synchronously
+                                await rightNotifier.printKitchenSlipForReorder(
+                                  context,
+                                  tableId: tableId,
+                                  newItems: displayItems,
+                                  tableData: activeTable,
+                                );
+                                tablesNotifier.setTableOrder(
+                                    tableId, conflictServerId!);
+                                rightNotifier.clearCalculate();
+                                rightNotifier.clearBag();
+                                return;
+                              }
+
+                              if (orderId == null || !mounted) return;
+                              await LocalStorage.setTableItems(
+                                  tableId, displayItems);
+                              tablesNotifier.setTableOrder(tableId, orderId);
+                              rightNotifier.clearCalculate();
+                              rightNotifier.clearBag();
+                              if (mounted) ref.read(mainProvider.notifier).refreshProducts(context: context);
+                            }
+                            return;
+                          }
+
+                          // Normal (non-table) flow
+                          final num totalDiscount =
+                              itemLevelDiscount + couponPrice;
+                          AppHelpers.showAlertDialog(
+                            context: context,
+                            child: OrderInformation(
+                              subtotal: subtotalBeforeBill,
+                              totalDiscount: totalDiscount,
+                              finalTotal: displayedTotal,
+                            ),
+                          );
+                        } finally {
+                          if (mounted) setState(() => _isOrdering = false);
+                        }
+                      },
               )
             ],
           ),
         ),
       ],
+    );
+  }
+
+  /// Shows a confirmation dialog when the server reports that the selected
+  /// table already has an active order (409 TABLE_HAS_ACTIVE_ORDER).
+  /// Returns `true` if the user confirms adding to the existing order.
+  Future<bool?> _showTableConflictDialog(
+      BuildContext ctx, int conflictServerId) {
+    return showDialog<bool>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Text(
+          AppHelpers.getTranslation('Active Order Detected'),
+          style:
+              GoogleFonts.inter(fontSize: 18.sp, fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          AppHelpers.getTranslation(
+              'This table already has an active order (#$conflictServerId). '
+              'Do you want to add your items to it?'),
+          style: GoogleFonts.inter(fontSize: 14.sp),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: Text(
+              AppHelpers.getTranslation(TrKeys.cancel),
+              style: GoogleFonts.inter(color: AppStyle.red),
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppStyle.primary,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8.r)),
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: Text(
+              AppHelpers.getTranslation(TrKeys.confirm),
+              style: GoogleFonts.inter(color: AppStyle.white),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

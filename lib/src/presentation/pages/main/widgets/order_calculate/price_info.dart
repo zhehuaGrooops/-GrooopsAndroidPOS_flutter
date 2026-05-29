@@ -1,6 +1,8 @@
 import 'package:admin_desktop/src/core/constants/constants.dart';
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/db/hive_service.dart';
+import 'package:admin_desktop/src/core/hooks/order_hooks.dart';
+import 'package:admin_desktop/src/core/utils/time_service.dart';
 import 'package:admin_desktop/src/core/utils/utils.dart';
 import 'package:admin_desktop/src/models/data/bag_data.dart';
 import 'package:admin_desktop/src/models/data/order_body_data.dart';
@@ -18,6 +20,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:admin_desktop/src/presentation/pages/main/widgets/open_drawer_dialog.dart';
 import 'package:admin_desktop/src/core/di/dependency_manager.dart';
+import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpod/tables_provider.dart';
 
 // ...existing imports...
 
@@ -47,6 +50,16 @@ class PriceInfo extends StatelessWidget {
 // ADD: Method to create enhanced products from calculation data
   List<EnhancedProductOrder> createEnhancedProducts() {
     final stocks = state.paginateResponse?.stocks ?? [];
+
+    // ── Hooks path ───────────────────────────────────────────────────────────
+    if (LocalStorage.getUseOrderHooks()) {
+      return OrderHooks().enhancedProduct.build(
+        stocks: stocks,
+        calculationData: calculationData ?? [],
+        orderType: state.orderType,
+      );
+    }
+    // ── Original path (unchanged) ────────────────────────────────────────────
     final List<EnhancedProductOrder> enhancedProducts = [];
 
     for (int i = 0; i < stocks.length; i++) {
@@ -118,6 +131,13 @@ class PriceInfo extends StatelessWidget {
   }
 
   Future<String?> _validateAddonStock() async {
+    // ── Hooks path ─────────────────────────────────────────────────────────
+    if (LocalStorage.getUseOrderHooks()) {
+      return OrderHooks().addonValidator.validate(
+        state.paginateResponse?.stocks ?? [],
+      );
+    }
+    // ── Original path (unchanged) ──────────────────────────────────────────
     try {
       final box = await HiveService.openBox(HiveBoxes.products);
 
@@ -224,6 +244,46 @@ class PriceInfo extends StatelessWidget {
     if (v is num) return v;
     if (v is String) return num.tryParse(v);
     return null;
+  }
+
+  /// Shows "Table has active order" confirmation dialog.
+  /// Returns [true] if user chose to continue, [false]/null if cancelled.
+  static Future<bool?> _showConflictDialog(
+      BuildContext ctx, int conflictServerId) {
+    return showDialog<bool>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Text(
+          AppHelpers.getTranslation('Active Order Detected'),
+          style: GoogleFonts.inter(
+              fontWeight: FontWeight.w600, fontSize: 18.sp),
+        ),
+        content: Text(
+          AppHelpers.getTranslation(
+              'This table already has an active order (#$conflictServerId). '
+              'Do you want to add your items to it?'),
+          style: GoogleFonts.inter(fontSize: 14.sp),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: Text(TrKeys.cancel,
+                style: GoogleFonts.inter(color: AppStyle.red)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppStyle.primary,
+                foregroundColor: AppStyle.white),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: Text(TrKeys.confirm,
+                style: GoogleFonts.inter(color: AppStyle.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -533,8 +593,11 @@ class PriceInfo extends StatelessWidget {
                     isActive: isCalculationValid && !state.isOrderLoading,
                     onPressed: (isCalculationValid && !state.isOrderLoading)
                         ? () async {
+                            // Lock immediately to block double-taps during async setup.
+                            notifier.setOrderLoading(true);
                             final addonStockError = await _validateAddonStock();
                             if (addonStockError != null) {
+                              notifier.setOrderLoading(false);
                               if (context.mounted) {
                                 AppHelpers.showSnackBar(
                                     context, addonStockError);
@@ -542,52 +605,30 @@ class PriceInfo extends StatelessWidget {
                               return;
                             }
 
-                            // Use new running-number increment endpoint for 'order' module
+                            // TABLE CASHOUT: resolve early to avoid wasting a
+                            // running-number increment — doc no was already
+                            // assigned at init order time.
+                            final cashoutTableId = LocalStorage.getCashoutTableId();
                             String? formattedTransactionId;
-                            String pos = 'POS';
-                            String csh = 'CSH';
-                            final int? numericShopId =
-                                LocalStorage.getUser()?.shop?.id ??
-                                    LocalStorage.getUser()?.invite?.shopId;
-                            final String shopid =
-                                (numericShopId ?? 0).toString();
-                            String terminalId = '';
-                            try {
-                              final termRes =
-                                  await settingsRepository.getTerminalID();
-                              termRes.when(
-                                success: (id) {
-                                  terminalId = id ?? '';
+                            int? cashoutExistingOrderId;
+
+                            if (cashoutTableId != null) {
+                              final tablesState = ref.read(tablesProvider);
+                              cashoutExistingOrderId = tablesState.tableOrders[cashoutTableId];
+                              if (cashoutExistingOrderId == null) {
+                                notifier.setOrderLoading(false);
+                                if (context.mounted) AppHelpers.showSnackBar(context, 'No active order for this table');
+                                return;
+                              }
+                              // Reuse transactionId stored at init order time.
+                              final orderResult = await ordersRepository.fetchOrderById(cashoutExistingOrderId);
+                              orderResult.when(
+                                success: (order) {
+                                  final tid = order.body?.transactionId;
+                                  if (tid != null && tid.isNotEmpty) formattedTransactionId = tid;
                                 },
-                                failure: (err, status) {
-                                  debugPrint('Failed to get terminal id: $err');
-                                },
+                                failure: (_, __) {},
                               );
-                            } catch (e) {
-                              debugPrint('Error while getting terminal id: $e');
-                            }
-                            final prefix = '$pos-S$shopid-$terminalId-$csh';
-                            final result = await settingsRepository
-                                .generateTransactionID(prefix);
-                            result.when(
-                              success: (docNo) {
-                                if (docNo != null && docNo.isNotEmpty) {
-                                  formattedTransactionId = docNo;
-                                }
-                              },
-                              failure: (error, statusCode) {
-                                debugPrint(
-                                    'running-number request error: $error');
-                              },
-                            );
-                            if (formattedTransactionId == null) {
-                              try {
-                                if (context.mounted) {
-                                  AppHelpers.showSnackBar(context,
-                                      'Failed to obtain doc no from server. Order not created.');
-                                }
-                              } catch (_) {}
-                              return; // abort createOrder when no running number
                             }
 
                             // Attach queue number and createdAt timestamp at order creation time.
@@ -606,7 +647,65 @@ class PriceInfo extends StatelessWidget {
                             // persist new counter and date
                             await LocalStorage.setQueueState(counter, today);
 
-                            if (!context.mounted) return;
+                            if (!context.mounted) {
+                              notifier.setOrderLoading(false);
+                              return;
+                            }
+
+                            if (cashoutTableId != null) {
+                              await notifier.cashoutTableOrder(
+                                context: context,
+                                orderId: cashoutExistingOrderId!,
+                                paymentId: bag.selectedPayment?.id ?? 1,
+                                paidAmount: paid,
+                                billDiscountAmount: billDiscountAmount,
+                                billDiscountType:
+                                    bag.selectedBillDiscount?.method,
+                                billDiscountPercent:
+                                    bag.selectedBillDiscount?.value,
+                                roundingAmount: rounding,
+                                refundAmount: refund < 0 ? refund.abs() : 0,
+                                transactionId: formattedTransactionId ?? '',
+                                queueNo:
+                                    counter.toString().padLeft(4, '0'),
+                                onSuccess: (effectiveId) async {
+                                  ref.read(newOrdersProvider.notifier).fetchNewOrders(isRefresh: true);
+                                  ref.read(acceptedOrdersProvider.notifier).fetchAcceptedOrders(isRefresh: true);
+                                  if (context.mounted && state.paginateResponse != null) {
+                                    showDialog(
+                                      context: context,
+                                      builder: (ctx) => Dialog(
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(12.r),
+                                        ),
+                                        child: SizedBox(
+                                          width: 380.w,
+                                          child: GenerateReceiptPage(
+                                            orderId: effectiveId.toString(),
+                                            isKitchen: true,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                    await OpenDrawerDialog.openDrawer(context);
+                                  }
+                                  notifier.clearCalculate();
+                                  mainNotifier.setPriceDate(null);
+                                  if (context.mounted) mainNotifier.refreshProducts(context: context);
+                                  notifier.removeSelectedTable();
+                                  final tablesNotifier = ref.read(tablesProvider.notifier);
+                                  // Exit ordering immediately so the table page (not
+                                  // the POS/reorder view) is shown while async ops run.
+                                  tablesNotifier.exitTableOrdering();
+                                  await LocalStorage.setCashoutTableId(null);
+                                  tablesNotifier.clearTableTimer(cashoutTableId);
+                                  tablesNotifier.clearTableOrder(cashoutTableId);
+                                  await LocalStorage.clearTableItems(cashoutTableId);
+                                },
+                              );
+                              return;
+                            }
+
                             notifier.createOrder(
                                 context,
                                 OrderBodyData(
@@ -720,8 +819,114 @@ class PriceInfo extends StatelessWidget {
                                 // clear calculation/refund after successful order
                                 notifier.clearCalculate();
                                 mainNotifier.setPriceDate(null);
+                                if (context.mounted) mainNotifier.refreshProducts(context: context);
                                 notifier.removeSelectedTable();
+
+                                // clear table timer/order if this was a table checkout
+                                final int? cashoutTableId =
+                                    LocalStorage.getCashoutTableId();
+                                if (cashoutTableId != null) {
+                                  final tablesNotifier =
+                                      ref.read(tablesProvider.notifier);
+                                  tablesNotifier
+                                      .clearTableTimer(cashoutTableId);
+                                  tablesNotifier
+                                      .clearTableOrder(cashoutTableId);
+                                  await LocalStorage
+                                      .clearTableItems(cashoutTableId);
+                                  await LocalStorage.setCashoutTableId(null);
+                                  tablesNotifier.exitTableOrdering();
+                                }
                               }
+                            },
+                            onConflict: (conflictServerId) async {
+                              // 409 TABLE_HAS_ACTIVE_ORDER fired from normal
+                              // order flow (dine_in with a table selected).
+                              if (!context.mounted) return;
+                              final tableData = state.selectedTable;
+                              final tableId = tableData?.id;
+                              if (tableData == null || tableId == null) return;
+
+                              final confirmed = await _showConflictDialog(
+                                  context, conflictServerId);
+                              if (confirmed != true || !context.mounted) {
+                                return;
+                              }
+
+                              // Add current cart items to the existing order.
+                              // ignore: use_build_context_synchronously
+                              await notifier.reorderDineInOrder(
+                                orderId: conflictServerId,
+                                enhancedProducts: createEnhancedProducts(),
+                                context: context,
+                              );
+
+                              // Map table → existing server order (no timer so
+                              // tables_page timerJustStarted listener stays quiet).
+                              final conflictTablesNotifier =
+                                  ref.read(tablesProvider.notifier);
+                              conflictTablesNotifier.setTableOrderOnly(
+                                  tableId, conflictServerId);
+
+                              await LocalStorage.setCashoutTableId(tableId);
+
+                              if (!context.mounted) return;
+
+                              // Proceed directly to cashout with the payment
+                              // values already entered by the cashier.
+                              // ignore: use_build_context_synchronously
+                              await notifier.cashoutTableOrder(
+                                context: context,
+                                orderId: conflictServerId,
+                                paymentId: bag.selectedPayment?.id ?? 1,
+                                paidAmount: paid,
+                                billDiscountAmount: billDiscountAmount,
+                                billDiscountType:
+                                    bag.selectedBillDiscount?.method,
+                                billDiscountPercent:
+                                    bag.selectedBillDiscount?.value,
+                                roundingAmount: rounding,
+                                refundAmount: refund < 0 ? refund.abs() : 0,
+                                transactionId: formattedTransactionId ?? '',
+                                queueNo:
+                                    counter.toString().padLeft(4, '0'),
+                                onSuccess: (effectiveId) async {
+                                  ref
+                                      .read(newOrdersProvider.notifier)
+                                      .fetchNewOrders(isRefresh: true);
+                                  ref
+                                      .read(acceptedOrdersProvider.notifier)
+                                      .fetchAcceptedOrders(isRefresh: true);
+                                  if (context.mounted &&
+                                      state.paginateResponse != null) {
+                                    showDialog(
+                                      context: context,
+                                      builder: (ctx) => Dialog(
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12.r),
+                                        ),
+                                        child: SizedBox(
+                                          width: 380.w,
+                                          child: GenerateReceiptPage(
+                                            orderId: effectiveId.toString(),
+                                            isKitchen: true,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                    // ignore: use_build_context_synchronously
+                                    await OpenDrawerDialog.openDrawer(context);
+                                  }
+                                  notifier.clearCalculate();
+                                  mainNotifier.setPriceDate(null);
+                                  if (context.mounted) mainNotifier.refreshProducts(context: context);
+                                  notifier.removeSelectedTable();
+                                  await LocalStorage.setCashoutTableId(null);
+                                  conflictTablesNotifier
+                                      .clearTableOrder(tableId);
+                                },
+                              );
                             });
                           }
                         : null),

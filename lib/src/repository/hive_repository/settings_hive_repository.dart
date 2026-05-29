@@ -1,5 +1,6 @@
 import 'package:admin_desktop/src/core/constants/hive_boxes.dart';
 import 'package:admin_desktop/src/core/handlers/handlers.dart';
+import 'package:admin_desktop/src/core/utils/app_connectivity.dart';
 import 'package:admin_desktop/src/models/response/mobile_translations_response.dart';
 import 'package:admin_desktop/src/models/response/sale_history_response.dart';
 import 'package:admin_desktop/src/models/response/sale_cart_response.dart';
@@ -11,7 +12,6 @@ import 'package:admin_desktop/src/models/data/help_data.dart';
 import 'package:admin_desktop/src/models/models.dart';
 import 'package:admin_desktop/src/repository/impl/settings_repository_impl.dart';
 
-import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 
 import '../../core/db/hive_service.dart';
@@ -23,8 +23,6 @@ class SettingsHiveRepository extends SettingsRepository {
   Future<Box> _translations() => HiveService.openBox(HiveBoxes.translations);
   Future<Box> _faqs() => HiveService.openBox(HiveBoxes.faq);
   Future<Box> _terminalBox() => HiveService.openBox(HiveBoxes.terminal);
-  Future<Box> _transactionCountersBox() =>
-      HiveService.openBox(HiveBoxes.transactionCounters);
   Future<Box> _ordersBox() => HiveService.openBox(HiveBoxes.orders);
 
   @override
@@ -270,8 +268,6 @@ class SettingsHiveRepository extends SettingsRepository {
           break;
         }
       }
-      debugPrint('Found sale receipt for saleId=$saleId: ${found != null}');
-      debugPrint('Whole order Json: ${box.toMap()}');
       if (found == null) return ApiResult.success(data: null);
       final saleReceipt = SaleReceipt.fromMap(found.toJson());
       return ApiResult.success(data: saleReceipt);
@@ -421,18 +417,27 @@ class SettingsHiveRepository extends SettingsRepository {
 
   @override
   Future<ApiResult<String?>> generateTransactionID(String prefix) async {
-    try {
-      // Maintain transaction counters locally in Hive per-prefix.
-      final box = await _transactionCountersBox();
-      final key = prefix.replaceAll(' ', '');
-      final current = (box.get(key) as int?) ?? 0;
-      final next = current + 1;
-      await box.put(key, next);
-      final padded = next.toString().padLeft(9, '0');
-      final result = '$prefix-$padded';
-      return ApiResult.success(data: result);
-    } catch (e) {
-      return ApiResult.failure(error: e.toString());
+    final isOnline = await AppConnectivity.connectivity();
+    if (isOnline) {
+      final result = await SettingsSettingsRepositoryImpl().generateTransactionID(prefix);
+      // If online but backend call failed, fall through to local fallback below.
+      bool succeeded = false;
+      String? docNo;
+      result.when(
+        success: (data) {
+          if (data != null && data.isNotEmpty) {
+            succeeded = true;
+            docNo = data;
+          }
+        },
+        failure: (_, __) {},
+      );
+      if (succeeded) return ApiResult.success(data: docNo);
     }
+    // Offline (or online but backend unavailable): generate a locally-unique ID.
+    // Format mirrors server format but uses timestamp to ensure uniqueness.
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final localDocNo = '$prefix-${ts.toString().padLeft(13, '0')}';
+    return ApiResult.success(data: localDocNo);
   }
 }

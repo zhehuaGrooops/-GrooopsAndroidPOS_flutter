@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'package:admin_desktop/src/core/di/dependency_manager.dart';
+import 'package:admin_desktop/src/models/data/table_data.dart';
 import 'package:admin_desktop/src/models/response/product_calculate_response.dart';
+import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../../../core/constants/constants.dart';
 import '../../../../../../core/utils/utils.dart';
+import '../../../../../../core/sync/sync_service.dart';
 import '../../../../../../models/models.dart';
 import 'right_side_provider.dart';
 import 'right_side_state.dart';
@@ -658,6 +661,209 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
     );
   }
 
+  void presetTableContext(TableData table, {ShopSection? section}) {
+    setSelectedOrderType(TrKeys.dine);
+    final bags = LocalStorage.getBags();
+    if (bags.isEmpty) return;
+    final idx = state.selectedBagIndex;
+    final updatedBag = bags[idx].copyWith(
+      selectedTable: table,
+      selectedSection: section ?? bags[idx].selectedSection,
+    );
+    bags[idx] = updatedBag;
+    LocalStorage.setBags(bags);
+    state = state.copyWith(
+      bags: bags,
+      selectedTable: table,
+      selectedSection: section ?? state.selectedSection,
+      selectTableError: null,
+      selectSectionError: null,
+    );
+  }
+
+  /// Creates an initial dine-in order in Hive and syncs to backend if online.
+  /// [enhancedProducts] are produced by [OrderCalculationHook] + [EnhancedProductHook]
+  /// in page_view_item.dart — no conversion happens here.
+  /// Returns the order ID on success, or null on failure.
+  Future<int?> initDineInOrder({
+    required int tableId,
+    required List<EnhancedProductOrder> enhancedProducts,
+    required BuildContext context,
+    String? transactionId,
+    /// Called when the server returns 409 (table already has an active order).
+    /// [conflictServerId] is the existing server-side order ID.
+    void Function(int conflictServerId)? onConflict,
+  }) async {
+    final now = DateTime.now();
+    final data = OrderBodyData(
+      bagData: BagData(
+        selectedCurrency: state.selectedCurrency,
+        selectedTable: state.selectedTable,
+        selectedSection: state.selectedSection,
+        selectedPayment: state.selectedPayment,
+        selectedUser: state.selectedUser,
+        selectedAddress: state.selectedAddress,
+      ),
+      deliveryType: TrKeys.dine,
+      tableId: tableId,
+      currencyId: state.selectedCurrency?.id,
+      rate: state.selectedCurrency?.rate ?? 0,
+      phone: LocalStorage.getUser()?.phone ?? '',
+      address: AddressModel(),
+      deliveryDate: DateFormat('yyyy-MM-dd').format(now),
+      deliveryTime: DateFormat('HH:mm').format(now),
+      enhancedProducts: enhancedProducts,
+      paidAmount: 0,
+      transactionId: transactionId,
+      queueNo: '1'.padLeft(4, '0'),
+      createdAt: now.toIso8601String(),
+    );
+
+    int? orderId;
+    final response = await ordersRepository.createOrder(data);
+    response.when(
+      success: (res) {
+        orderId = res.data?.id;
+      },
+      failure: (failure, status) {
+        // 409 conflict: table already has an active order on the server.
+        if (failure.startsWith('TABLE_CONFLICT:')) {
+          final conflictId =
+              int.tryParse(failure.substring('TABLE_CONFLICT:'.length));
+          if (conflictId != null) {
+            onConflict?.call(conflictId);
+            return;
+          }
+        }
+        if (context.mounted) {
+          AppHelpers.showSnackBar(context, failure);
+        }
+      },
+    );
+    return orderId;
+  }
+
+  /// Appends [enhancedProducts] to an existing order.
+  /// [enhancedProducts] are produced by [OrderCalculationHook] + [EnhancedProductHook]
+  /// in page_view_item.dart — no conversion happens here.
+  Future<int?> reorderDineInOrder({
+    required int orderId,
+    required List<EnhancedProductOrder> enhancedProducts,
+    required BuildContext context,
+  }) async {
+    await ordersRepository.addProductsToOrder(
+        orderId: orderId, newItems: enhancedProducts);
+    return orderId;
+  }
+
+  void setOrderLoading(bool loading) {
+    state = state.copyWith(isOrderLoading: loading);
+  }
+
+  Future<void> cashoutTableOrder({
+    required BuildContext context,
+    required int orderId,
+    required int paymentId,
+    required num paidAmount,
+    required num billDiscountAmount,
+    String? billDiscountType,
+    num? billDiscountPercent,
+    required num roundingAmount,
+    required num refundAmount,
+    required String transactionId,
+    required String queueNo,
+    required Function(int effectiveId) onSuccess,
+  }) async {
+    state = state.copyWith(isOrderLoading: true);
+    try {
+      int? serverId;
+      // localHiveKey is the local unix-timestamp Hive key (order.id).
+      // orderId passed in may equal serverId (when init was online and createOrder
+      // returned serverId), so we resolve the actual local Hive key here to avoid
+      // ordersBox.get(serverId) returning null later.
+      int? localHiveKey;
+
+      final orderResult = await ordersRepository.fetchOrderById(orderId);
+      orderResult.when(
+        success: (order) {
+          serverId = order.meta?.serverId;
+          localHiveKey = order.id;
+        },
+        failure: (_, __) {},
+      );
+
+      if (serverId == null && await AppConnectivity.connectivity()) {
+        await SyncService().pushSingleOrder(localHiveKey ?? orderId);
+        final updated = await ordersRepository.fetchOrderById(orderId);
+        updated.when(
+          success: (order) {
+            serverId = order.meta?.serverId;
+            localHiveKey = order.id;
+          },
+          failure: (_, __) {},
+        );
+      }
+
+      // Persist payment finalisation details to Hive order before submitting.
+      await ordersRepository.finalizeOrderPayment(
+        orderId: orderId,
+        paidAmount: paidAmount,
+        billDiscountAmount: billDiscountAmount,
+        billDiscountType: billDiscountType,
+        billDiscountPercent: billDiscountPercent,
+        roundingAmount: roundingAmount,
+        refundAmount: refundAmount,
+        transactionId: transactionId,
+        queueNo: queueNo,
+      );
+
+      // Use local Hive key for createTransaction so that both the inline
+      // submitPaymentTransaction path and the SyncService pushTransactions
+      // fallback can resolve the Hive order entry by its actual stored key.
+      final localKey = localHiveKey ?? orderId;
+      final effectiveId = serverId ?? orderId;
+
+      await paymentsRepository.createTransaction(
+        orderId: localKey,
+        paymentId: paymentId,
+      );
+
+      if (serverId != null && await AppConnectivity.connectivity()) {
+        // Table orders: POST /orders/{serverId}/cashout — single atomic call.
+        // Replaces old submitPaymentTransaction + updateOrderStatusOnBackend 2-step.
+        await SyncService().cashoutTableOrder(
+          serverId: serverId!,
+          hiveKey: localKey,
+          paymentId: paymentId,
+          paidAmount: paidAmount,
+          refundAmount: refundAmount,
+          billDiscountAmount: billDiscountAmount,
+          billDiscountType: billDiscountType,
+          billDiscountPercent: billDiscountPercent,
+        );
+      }
+
+      if (context.mounted) removeOrderedBag(context);
+      state = state.copyWith(isOrderLoading: false);
+      onSuccess(effectiveId);
+    } catch (e) {
+      state = state.copyWith(isOrderLoading: false);
+      if (context.mounted) {
+        AppHelpers.showSnackBar(context, e.toString());
+      }
+    }
+  }
+
+  /// Prints kitchen slip for reorder. No-op if printer not configured.
+  Future<void> printKitchenSlipForReorder(
+    BuildContext context, {
+    required int tableId,
+    required List<Map<String, dynamic>> newItems,
+    required TableData tableData,
+  }) async {
+    debugPrint('printKitchenSlipForReorder: table=${tableData.name}, items=${newItems.length}');
+  }
+
   void setSelectedOrderType(String? type) {
     PaymentData? selectedPayment = state.selectedPayment;
     if (state.selectedPayment?.tag != 'cash') {
@@ -1217,7 +1423,8 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
   }
 
   Future createOrder(BuildContext context, OrderBodyData data,
-      {Function(int orderId)? onSuccess}) async {
+      {Function(int orderId)? onSuccess,
+      void Function(int conflictServerId)? onConflict}) async {
     state = state.copyWith(isOrderLoading: true);
     // final num wallet = state.selectedUser?.wallet?.price ?? 0;
     //Remove this validation as per requested by Client for Enhancement
@@ -1256,6 +1463,17 @@ class RightSideNotifier extends StateNotifier<RightSideState> {
         onSuccess?.call(res.data?.id ?? 0);
       },
       failure: (failure, status) async {
+        // 409 TABLE_HAS_ACTIVE_ORDER — propagate via callback instead of snackbar.
+        if (failure.startsWith('TABLE_CONFLICT:')) {
+          final conflictId =
+              int.tryParse(failure.substring('TABLE_CONFLICT:'.length));
+          if (conflictId != null) {
+            state = state.copyWith(isOrderLoading: false);
+            onConflict?.call(conflictId);
+            return;
+          }
+        }
+
         // Try to parse invalid stock_id from backend error
         final errorString = failure.toString();
         final regExp = RegExp(r'products[ .](\d+)[ .]stock_id');

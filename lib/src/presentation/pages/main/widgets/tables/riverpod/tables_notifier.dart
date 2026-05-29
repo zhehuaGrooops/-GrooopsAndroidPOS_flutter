@@ -7,29 +7,46 @@ import 'package:admin_desktop/src/models/data/table_bookings_data.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../../../../core/sync/sync_service.dart';
 import '../../../../../../core/utils/utils.dart';
 import '../../../../../../models/data/table_data.dart';
 import '../../../../../../models/models.dart';
+import '../../../../../../repository/orders_repository.dart';
 import '../../../../../../repository/table_repository.dart';
 import 'tables_state.dart';
 
 class TablesNotifier extends StateNotifier<TablesState> {
   final TableRepository tableRepository;
+  final OrdersRepository ordersRepository;
   int _sectionPage = 0;
   int _page = 0;
 
-  TablesNotifier(this.tableRepository) : super(const TablesState());
+  TablesNotifier(this.tableRepository, this.ordersRepository)
+      : super(const TablesState());
 
   initial() async {
     await fetchSectionList(isRefresh: true);
-    fetchTable(isRefresh: true);
+    await fetchTable(isRefresh: true);
+    // Recover active-order associations — server-embedded entries first,
+    // then local Hive pending entries via loadTableStatuses.
+    await loadTableStatuses();
     getWorkingDay();
     getCloseDay();
   }
 
-  refresh() {
+  Future<void> refresh() async {
     clearTime();
-    changeListTabIndex(state.selectListTabIndex);
+    state = state.copyWith(isLoading: true);
+    final online = await AppConnectivity.connectivity();
+    if (online) {
+      await SyncService().pullTablesFromServer();
+    }
+    await fetchSectionList(isRefresh: true);
+    await fetchTable(isRefresh: true);
+    await loadTableStatuses();
+    if (state.isListView) {
+      changeListTabIndex(state.selectListTabIndex);
+    }
   }
 
   void changeViewMode(int index) {
@@ -228,6 +245,160 @@ class TablesNotifier extends StateNotifier<TablesState> {
     }
   }
 
+  void startTableTimer(int tableId) {
+    final t = Map<int, DateTime>.from(state.tableTimers);
+    t[tableId] = DateTime.now();
+    state = state.copyWith(tableTimers: t);
+  }
+
+  void clearTableTimer(int tableId) {
+    final t = Map<int, DateTime>.from(state.tableTimers);
+    t.remove(tableId);
+    state = state.copyWith(tableTimers: t);
+  }
+
+  Future<void> loadTableStatuses() async {
+    final response =
+        await ordersRepository.getOrders(status: OrderStatus.newOrder);
+    response.when(
+      success: (data) {
+        final orders = data.data?.orders ?? [];
+        // Start from what fetchTable() already populated (server-embedded
+        // orders take precedence). putIfAbsent ensures we only add entries
+        // for tables not already tracked (e.g. locally-pending orders that
+        // the server doesn't know about yet).
+        final ids = Map<int, int>.from(state.tableOrders);
+        final timers = Map<int, DateTime>.from(state.tableTimers);
+        for (final order in orders) {
+          // order.table?.id is populated from the 'table' object (server
+          // responses) or from the 'table_id' fallback (Hive-stored orders).
+          final tableId = order.table?.id;
+          final orderId = order.id;
+          if (tableId != null && orderId != null) {
+            ids.putIfAbsent(tableId, () => orderId);
+            timers.putIfAbsent(tableId, () => order.createdAt != null
+                ? DateTime.tryParse(order.createdAt!) ?? DateTime.now()
+                : DateTime.now());
+          }
+        }
+        state = state.copyWith(tableOrders: ids, tableTimers: timers);
+      },
+      failure: (failure, status) {
+        debugPrint('==> loadTableStatuses failed: $failure');
+      },
+    );
+  }
+
+  void setTableOrder(int tableId, int orderId) {
+    final orders = Map<int, int>.from(state.tableOrders);
+    orders[tableId] = orderId;
+    final timers = Map<int, DateTime>.from(state.tableTimers);
+    timers.putIfAbsent(tableId, () => DateTime.now());
+    state = state.copyWith(tableOrders: orders, tableTimers: timers);
+  }
+
+  /// Maps tableId → orderId in [tableOrders] WITHOUT starting the elapsed
+  /// timer.  Use when navigating directly to cashout (409 conflict resolution)
+  /// so the tables_page timerJustStarted listener does NOT fire
+  /// exitTableOrdering prematurely.
+  void setTableOrderOnly(int tableId, int orderId) {
+    final orders = Map<int, int>.from(state.tableOrders);
+    orders[tableId] = orderId;
+    state = state.copyWith(tableOrders: orders);
+  }
+
+  void clearTableOrder(int tableId) {
+    final orders = Map<int, int>.from(state.tableOrders);
+    orders.remove(tableId);
+    state = state.copyWith(tableOrders: orders);
+  }
+
+  void setKitchenLabel(String label) {
+    state = state.copyWith(kitchenOrderLabel: label);
+  }
+
+  void enterTableOrdering(TableData table) {
+    final tableId = table.id ?? 0;
+    final isReorder = state.tableTimers.containsKey(tableId);
+    setKitchenLabel(isReorder ? 'REORDER' : 'NEW ORDER');
+    LocalStorage.setActiveOrderingTableId(table.id);
+    state = state.copyWith(activeOrderTable: table);
+  }
+
+  void exitTableOrdering() {
+    LocalStorage.setActiveOrderingTableId(null);
+    state = state.copyWith(activeOrderTable: null);
+  }
+
+  void toggleEditMode() {
+    final wasEditing = state.isEditMode;
+    state = state.copyWith(isEditMode: !wasEditing);
+    if (wasEditing) {
+      fetchTable(isRefresh: true);
+    }
+  }
+
+  Future<void> updateTablePosition(
+      int tableId, double normX, double normY) async {
+    final updated = Map<int, Offset>.from(state.tablePositions);
+    updated[tableId] = Offset(normX, normY);
+    state = state.copyWith(tablePositions: updated);
+
+    final result = await tableRepository.updateTable(
+        id: tableId, positionX: normX, positionY: normY);
+    result.when(
+      success: (_) {},
+      failure: (error, _) {
+        final reverted = Map<int, Offset>.from(state.tablePositions);
+        reverted.remove(tableId);
+        state = state.copyWith(tablePositions: reverted);
+        debugPrint('==> updateTablePosition reverted: $error');
+      },
+    );
+  }
+
+  Future<void> updateMapSize(int sectionId, int width, int height) async {
+    final optimistic = state.shopSectionList.map((s) {
+      if (s?.id != sectionId) return s;
+      return ShopSection(
+        id: s!.id,
+        shopId: s.shopId,
+        area: s.area,
+        img: s.img,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        translation: s.translation,
+        mapWidth: width,
+        mapHeight: height,
+      );
+    }).toList();
+    state = state.copyWith(shopSectionList: optimistic);
+
+    final result =
+        await tableRepository.updateSectionMapSize(sectionId, width, height);
+    result.when(
+      success: (section) {
+        final confirmed = state.shopSectionList.map((s) {
+          if (s?.id != sectionId) return s;
+          return ShopSection(
+            id: s!.id,
+            shopId: s.shopId,
+            area: s.area,
+            img: s.img,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt,
+            translation: s.translation,
+            mapWidth: section.mapWidth ?? s.mapWidth,
+            mapHeight: section.mapHeight ?? s.mapHeight,
+          );
+        }).toList();
+        state = state.copyWith(shopSectionList: confirmed);
+      },
+      failure: (error, _) =>
+          debugPrint('==> updateMapSize failure: $error'),
+    );
+  }
+
   setSection({String? title, int? index}) {
     if (title != null) {
       for (int i = 0; i < state.shopSectionList.length; i++) {
@@ -264,6 +435,52 @@ class TablesNotifier extends StateNotifier<TablesState> {
       }
       state = state.copyWith(isSectionLoading: false);
     });
+    state = state.copyWith(isSectionLoading: false);
+  }
+
+  Future<void> deleteSectionById(
+      {required int id, required BuildContext context}) async {
+    state = state.copyWith(isSectionLoading: true);
+    final res = await tableRepository.deleteSection(id);
+    res.when(
+      success: (_) async {
+        await fetchSectionList(isRefresh: true);
+        if (state.selectSection >= state.shopSectionList.length &&
+            state.shopSectionList.isNotEmpty) {
+          state = state.copyWith(selectSection: 0);
+        }
+      },
+      failure: (failure, status) {
+        if (context.mounted) {
+          AppHelpers.showSnackBar(
+              context, AppHelpers.getTranslation(failure.toString()));
+        }
+        state = state.copyWith(isSectionLoading: false);
+      },
+    );
+    state = state.copyWith(isSectionLoading: false);
+  }
+
+  Future<void> updateSectionById(
+      {required int id,
+      required String name,
+      required num area,
+      required BuildContext context}) async {
+    state = state.copyWith(isSectionLoading: true);
+    final res =
+        await tableRepository.updateSection(id: id, name: name, area: area);
+    res.when(
+      success: (_) async {
+        await fetchSectionList(isRefresh: true);
+      },
+      failure: (failure, status) {
+        if (context.mounted) {
+          AppHelpers.showSnackBar(
+              context, AppHelpers.getTranslation(failure.toString()));
+        }
+        state = state.copyWith(isSectionLoading: false);
+      },
+    );
     state = state.copyWith(isSectionLoading: false);
   }
 
@@ -339,9 +556,42 @@ class TablesNotifier extends StateNotifier<TablesState> {
         tableListData.addAll(newTables);
         state = state.copyWith(hasMore: newTables.length >= 10);
 
+        final positions = isRefresh
+            ? <int, Offset>{}
+            : Map<int, Offset>.from(state.tablePositions);
+        for (final t in newTables) {
+          final id = t.id;
+          if (id != null && t.positionX != null && t.positionY != null) {
+            positions[id] = Offset(t.positionX!, t.positionY!);
+          }
+        }
+
+        // Extract active orders embedded by the backend in table.order.
+        // On refresh, start fresh so tables that no longer have an active
+        // order are cleared. On pagination, preserve existing entries.
+        final updatedOrders = isRefresh
+            ? <int, int>{}
+            : Map<int, int>.from(state.tableOrders);
+        final updatedTimers = isRefresh
+            ? <int, DateTime>{}
+            : Map<int, DateTime>.from(state.tableTimers);
+        for (final t in newTables) {
+          final tableId = t.id;
+          final activeOrder = t.order;
+          if (tableId != null && activeOrder?.id != null) {
+            updatedOrders[tableId] = activeOrder!.id!;
+            updatedTimers[tableId] = activeOrder.createdAt != null
+                ? DateTime.tryParse(activeOrder.createdAt!) ?? DateTime.now()
+                : DateTime.now();
+          }
+        }
+
         state = state.copyWith(
           isLoading: false,
           tableListData: tableListData,
+          tablePositions: positions,
+          tableOrders: updatedOrders,
+          tableTimers: updatedTimers,
         );
         await getStatistic(start: start, end: end);
       },
@@ -419,6 +669,24 @@ class TablesNotifier extends StateNotifier<TablesState> {
         );
       }
     });
+  }
+
+  Future<void> updateTable({
+    required int id,
+    required String name,
+    required int chairCount,
+    required BuildContext context,
+  }) async {
+    final result = await tableRepository.updateTable(
+        id: id, name: name, chairCount: chairCount);
+    result.when(
+      success: (_) => fetchTable(isRefresh: true),
+      failure: (error, _) {
+        if (context.mounted) {
+          AppHelpers.showSnackBar(context, AppHelpers.getTranslation(error));
+        }
+      },
+    );
   }
 
   deleteTable({required int index}) async {

@@ -516,12 +516,10 @@ class _GenerateReceiptPageState extends State<GenerateReceiptPage> {
           final ln = (local.lastname ?? '').trim();
           final combined = ('$fn $ln').trim();
           if (combined.isNotEmpty) {
-            debugPrint('preview: using LocalStorage.getUser -> $combined');
             return combined;
           }
         }
       } catch (_) {}
-      debugPrint('preview: no username found -> Unknown');
       return 'Unknown';
     }
 

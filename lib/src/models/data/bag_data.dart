@@ -38,10 +38,10 @@ class BagData {
         ? UserData.fromJson(json['selected_user'])
         : null;
     _selectedTable = json['selected_table'] != null
-        ? TableData.fromJson(json['selected_table'])
+        ? TableData.fromJson(Map<String, dynamic>.from(json['selected_table']))
         : null;
     _selectedSection = json['selected_section'] != null
-        ? ShopSection.fromJson(json['selected_section'])
+        ? ShopSection.fromJson(Map<String, dynamic>.from(json['selected_section']))
         : null;
     _selectedAddress = json['selected_address'] != null
         ? AddressData.fromJson(json['selected_address'])

@@ -16,7 +16,5 @@ class HttpService {
           },
         ),
       )
-        ..interceptors.add(TokenInterceptor(requireAuth: requireAuth))
-        ..interceptors
-            .add(LogInterceptor(responseBody: true, requestBody: true));
+        ..interceptors.add(TokenInterceptor(requireAuth: requireAuth));
 }

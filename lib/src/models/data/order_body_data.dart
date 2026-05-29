@@ -267,6 +267,10 @@ class EnhancedProductOrder {
   // Addons
   final List<EnhancedAddonOrder>? addons;
 
+  /// Server-assigned order_detail ID. Populated after init/reorder sync.
+  /// Required for DELETE /orders/{serverId}/items/{orderDetailId}.
+  final int? serverDetailId;
+
   EnhancedProductOrder({
     required this.stockId,
     this.countableId,
@@ -284,6 +288,7 @@ class EnhancedProductOrder {
     this.categoryName,
     this.categoryId,
     this.addons,
+    this.serverDetailId,
   });
 
   Map<String, dynamic> toJson() {
@@ -305,6 +310,7 @@ class EnhancedProductOrder {
       'category_id': categoryId,
       if (addons != null && addons!.isNotEmpty)
         'addons': addons!.map((a) => a.toJson()).toList(),
+      if (serverDetailId != null) 'server_detail_id': serverDetailId,
     };
   }
 
@@ -330,6 +336,7 @@ class EnhancedProductOrder {
               .map((e) => EnhancedAddonOrder.fromJson(e as Map))
               .toList()
           : null,
+      serverDetailId: json['server_detail_id'],
     );
   }
 }
