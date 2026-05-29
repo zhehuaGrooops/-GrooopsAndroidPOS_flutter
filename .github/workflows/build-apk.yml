@@ -1,0 +1,232 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - staging
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ github.ref_name == 'main' && 'Prod' || 'UAT' }} APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout (full history for git log range) ──────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 2. Resolve flavor ─────────────────────────────────────────────────────
+      - name: Resolve flavor
+        id: flavor
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "name=prod" >> $GITHUB_OUTPUT
+            echo "label=Production" >> $GITHUB_OUTPUT
+          else
+            echo "name=uat" >> $GITHUB_OUTPUT
+            echo "label=UAT" >> $GITHUB_OUTPUT
+          fi
+
+      # ── 3. Compute and write new version ──────────────────────────────────────
+      - name: Compute version
+        id: version
+        run: |
+          # Bootstrap if version.json is missing (safety net for first run)
+          if [ ! -f version.json ]; then
+            echo '{"major":1,"minor":0,"patch":0,"uatBuild":0,"buildNumber":4}' > version.json
+            echo "WARNING: version.json was missing — bootstrapped from defaults."
+          fi
+
+          MAJOR=$(jq -r '.major' version.json)
+          MINOR=$(jq -r '.minor' version.json)
+          PATCH=$(jq -r '.patch' version.json)
+          UAT_BUILD=$(jq -r '.uatBuild' version.json)
+          BUILD_NUMBER=$(jq -r '.buildNumber' version.json)
+
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            # Prod: increment patch, reset uatBuild
+            NEW_PATCH=$((PATCH + 1))
+            NEW_UAT_BUILD=0
+            NEW_BUILD_NUMBER=$((BUILD_NUMBER + 1))
+            VERSION_STRING="${MAJOR}.${MINOR}.${NEW_PATCH}"
+
+            jq -n \
+              --argjson maj "$MAJOR" \
+              --argjson min "$MINOR" \
+              --argjson pat "$NEW_PATCH" \
+              --argjson uat "0" \
+              --argjson bn "$NEW_BUILD_NUMBER" \
+              '{major:$maj,minor:$min,patch:$pat,uatBuild:$uat,buildNumber:$bn}' \
+              > version.json
+
+          else
+            # UAT: base patch from origin/main, increment uatBuild
+            git fetch origin main --depth=1
+
+            MAIN_VERSION_JSON=$(git show origin/main:version.json 2>/dev/null \
+              || echo '{"major":1,"minor":0,"patch":0,"uatBuild":0,"buildNumber":4}')
+            MAIN_PATCH=$(echo "$MAIN_VERSION_JSON" | jq -r '.patch')
+
+            NEW_UAT_BUILD=$((UAT_BUILD + 1))
+            NEW_BUILD_NUMBER=$((BUILD_NUMBER + 1))
+            VERSION_STRING="${MAJOR}.${MINOR}.${MAIN_PATCH}.${NEW_UAT_BUILD}"
+
+            jq -n \
+              --argjson maj "$MAJOR" \
+              --argjson min "$MINOR" \
+              --argjson pat "$PATCH" \
+              --argjson uat "$NEW_UAT_BUILD" \
+              --argjson bn "$NEW_BUILD_NUMBER" \
+              '{major:$maj,minor:$min,patch:$pat,uatBuild:$uat,buildNumber:$bn}' \
+              > version.json
+          fi
+
+          echo "version_string=${VERSION_STRING}" >> $GITHUB_OUTPUT
+          echo "build_number=${NEW_BUILD_NUMBER}" >> $GITHUB_OUTPUT
+          echo "apk_name=odera-${{ steps.flavor.outputs.name }}-${VERSION_STRING}.apk" >> $GITHUB_OUTPUT
+
+      # ── 4. Collect commits for release notes ──────────────────────────────────
+      - name: Collect commits
+        id: commits
+        run: |
+          # Find the previous version-bump commit (skip current HEAD)
+          LAST_BUMP=$(git log --format="%H %s" | grep "chore: bump version" | sed -n '2p' | awk '{print $1}')
+
+          if [ -z "$LAST_BUMP" ]; then
+            RANGE="HEAD~50..HEAD^"
+          else
+            RANGE="${LAST_BUMP}..HEAD^"
+          fi
+
+          ALL_COMMITS=$(git log "$RANGE" --format="%s" 2>/dev/null || true)
+          FULL_LOG=$(git log "$RANGE" --format="%h %s" 2>/dev/null || true)
+
+          FEATS=$(echo "$ALL_COMMITS" | grep -E "^[Ff]eat(\(.+\))?[: ]" | sed 's/^[Ff]eat[^:]*: /- /' || true)
+          FIXES=$(echo "$ALL_COMMITS" | grep -E "^[Ff]ix(\(.+\))?[: ]" | sed 's/^[Ff]ix[^:]*: /- /' || true)
+          OTHERS=$(echo "$ALL_COMMITS" | grep -vE "^[Ff]eat(\(.+\))?[: ]|^[Ff]ix(\(.+\))?[: ]|^chore: bump version" | sed 's/^/- /' || true)
+
+          {
+            echo "feats<<EOF"
+            echo "${FEATS:-None}"
+            echo "EOF"
+            echo "fixes<<EOF"
+            echo "${FIXES:-None}"
+            echo "EOF"
+            echo "others<<EOF"
+            echo "${OTHERS:-None}"
+            echo "EOF"
+            echo "full_log<<EOF"
+            echo "${FULL_LOG:-No prior commits found}"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      # ── 5. Commit and push version.json (BEFORE building) ────────────────────
+      - name: Commit version bump
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version_string }} [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
+
+      # ── 6. Toolchain ──────────────────────────────────────────────────────────
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate code
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      # ── 7. Signing setup ──────────────────────────────────────────────────────
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/grooops-release.jks
+
+      - name: Create key.properties
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=${{ secrets.STORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=../grooops-release.jks
+          EOF
+
+      # ── 8. Build APK ──────────────────────────────────────────────────────────
+      - name: Build APK
+        run: |
+          flutter build apk --release \
+            --flavor ${{ steps.flavor.outputs.name }} \
+            --dart-define=FLAVOR=${{ steps.flavor.outputs.name }} \
+            --build-name=${{ steps.version.outputs.version_string }} \
+            --build-number=${{ steps.version.outputs.build_number }}
+
+      # ── 9. Rename APK to lowercase odera-{env}-{version}.apk ─────────────────
+      - name: Rename APK
+        run: |
+          FINAL_APK="build/app/outputs/flutter-apk/${{ steps.version.outputs.apk_name }}"
+
+          # Flutter may copy to flutter-apk/ or leave in Gradle output dir — find it
+          SRC=$(find build/app/outputs -name "*.apk" 2>/dev/null | head -1)
+
+          if [ -z "$SRC" ]; then
+            echo "ERROR: No APK found. Output tree:"
+            find build/app/outputs -type f 2>/dev/null
+            exit 1
+          fi
+
+          echo "Found: ${SRC}"
+          echo "Target: ${FINAL_APK}"
+          mkdir -p "$(dirname "${FINAL_APK}")"
+          mv "${SRC}" "${FINAL_APK}"
+
+      # ── 10. Generate release-notes.txt ────────────────────────────────────────
+      - name: Generate release notes
+        run: |
+          cat > release-notes.txt <<NOTES
+          App Name:     Odera
+          Environment:  ${{ steps.flavor.outputs.label }}
+          Version:      ${{ steps.version.outputs.version_string }}
+          Build Number: ${{ steps.version.outputs.build_number }}
+          Date:         $(date -u '+%Y-%m-%d %H:%M UTC')
+          Commit SHA:   ${{ github.sha }}
+
+          ## Features
+          ${{ steps.commits.outputs.feats }}
+
+          ## Bug Fixes
+          ${{ steps.commits.outputs.fixes }}
+
+          ## Other Changes
+          ${{ steps.commits.outputs.others }}
+
+          ## All Commits Since Last Release
+          ${{ steps.commits.outputs.full_log }}
+          NOTES
+
+      # ── 11. Upload artifacts ──────────────────────────────────────────────────
+      - name: Upload APK and release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.apk_name }}
+          path: |
+            build/app/outputs/flutter-apk/${{ steps.version.outputs.apk_name }}
+            release-notes.txt
+          retention-days: 30
+          if-no-files-found: error
