@@ -14,7 +14,6 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../../../generated/assets.dart';
 import '../../../../../core/constants/constants.dart';
-import '../../../../../core/di/dependency_manager.dart';
 import '../../../../../core/di/injection.dart';
 import '../../../../../core/utils/utils.dart';
 import '../../../../../models/models.dart';
@@ -1336,43 +1335,9 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
                               rightNotifier.clearCalculate();
                               rightNotifier.clearBag();
                               tablesNotifier.exitTableOrdering();
+                              if (mounted) ref.read(mainProvider.notifier).refreshProducts(context: context);
                             } else {
-                              // Generate doc no at init time — stored in the order and
-                              // reused at cashout (not regenerated there).
                               String? initTransactionId;
-                              final int? numericShopId =
-                                  LocalStorage.getUser()?.shop?.id ??
-                                      LocalStorage.getUser()?.invite?.shopId;
-                              final String shopId =
-                                  (numericShopId ?? 0).toString();
-                              String terminalId = '';
-                              try {
-                                final termRes =
-                                    await settingsRepository.getTerminalID();
-                                termRes.when(
-                                  success: (id) {
-                                    terminalId = id ?? '';
-                                  },
-                                  failure: (_, __) {},
-                                );
-                              } catch (_) {}
-                              final date = TimeService.dateFormatDDMMYYYY();
-                              final prefix = 'POS-S$shopId-$terminalId-$date-CSH';
-                              final txnResult = await settingsRepository
-                                  .generateTransactionID(prefix);
-                              txnResult.when(
-                                success: (docNo) {
-                                  if (docNo != null && docNo.isNotEmpty)
-                                    initTransactionId = docNo;
-                                },
-                                failure: (_, __) {},
-                              );
-                              if (initTransactionId == null) {
-                                if (mounted)
-                                  AppHelpers.showSnackBar(context,
-                                      'Failed to obtain doc no. Order not created.');
-                                return;
-                              }
 
                               int? conflictServerId;
                               final orderId =
@@ -1423,6 +1388,7 @@ class _PageViewItemState extends ConsumerState<PageViewItem> {
                               tablesNotifier.setTableOrder(tableId, orderId);
                               rightNotifier.clearCalculate();
                               rightNotifier.clearBag();
+                              if (mounted) ref.read(mainProvider.notifier).refreshProducts(context: context);
                             }
                             return;
                           }

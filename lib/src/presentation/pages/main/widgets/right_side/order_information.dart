@@ -1,6 +1,6 @@
-// ignore_for_file: must_be_immutable
-
 import 'package:admin_desktop/src/core/constants/constants.dart';
+import 'package:admin_desktop/src/core/hooks/order_hooks.dart';
+import 'package:admin_desktop/src/models/response/product_calculate_response.dart';
 import 'package:admin_desktop/src/core/utils/app_helpers.dart';
 import 'package:admin_desktop/src/core/utils/app_validators.dart';
 import 'package:admin_desktop/src/core/utils/local_storage.dart';
@@ -8,8 +8,8 @@ import 'package:admin_desktop/src/models/models.dart';
 import 'package:admin_desktop/src/presentation/components/buttons/animation_button_effect.dart';
 import 'package:admin_desktop/src/presentation/components/components.dart';
 import 'package:admin_desktop/src/presentation/components/text_fields/custom_textformfield.dart';
-
 import 'package:admin_desktop/src/presentation/pages/main/riverpod/provider/main_provider.dart';
+import 'package:admin_desktop/src/presentation/pages/main/widgets/tables/riverpod/tables_provider.dart';
 import 'package:admin_desktop/src/presentation/theme/theme.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
@@ -21,42 +21,38 @@ import 'package:google_fonts/google_fonts.dart';
 import 'riverpod/right_side_provider.dart';
 import 'riverpod/right_side_state.dart';
 
-class OrderInformation extends ConsumerWidget {
-  // optional override for the subtotal shown in the modal (e.g. client-side calculated total)
-  // final num? initialSubtotal;
-
+class OrderInformation extends ConsumerStatefulWidget {
   final num subtotal;
   final num totalDiscount;
   final num finalTotal;
 
-  OrderInformation({
+  const OrderInformation({
     super.key,
-    // UPDATE the constructor
     required this.subtotal,
     required this.totalDiscount,
     required this.finalTotal,
   });
 
-  // kept as minimal placeholder: actual options are built dynamically from product.category.service_types
+  @override
+  ConsumerState<OrderInformation> createState() => _OrderInformationState();
+}
+
+class _OrderInformationState extends ConsumerState<OrderInformation> {
   List listOfType = [];
-
   List listDine = [TrKeys.dine];
-
   final formKey = GlobalKey<FormState>();
+  bool _isProcessingConflict = false;
 
   List _buildShippingOptionsFromState(RightSideState state) {
-    // Try to read service_types from the first product's category
     List<String> names = [];
     try {
       final stocks = state.paginateResponse?.stocks;
       if (stocks != null && stocks.isNotEmpty) {
         final category = stocks.first.category;
-        // Support different naming conventions in generated models: serviceTypes or service_types
         final serviceTypes = (category == null)
             ? null
-            : ( // try a few common shapes defensively
-                (category as dynamic).serviceTypes ??
-                    (category as dynamic).service_types);
+            : ((category as dynamic).serviceTypes ??
+                (category as dynamic).service_types);
 
         if (serviceTypes is List && serviceTypes.isNotEmpty) {
           for (final st in serviceTypes) {
@@ -66,7 +62,6 @@ class OrderInformation extends ConsumerWidget {
             } else if (st is Map) {
               names.add((st['name'] ?? '').toString());
             } else {
-              // try reading name property from an object
               try {
                 names.add(((st as dynamic).name ?? '').toString());
               } catch (_) {}
@@ -76,7 +71,6 @@ class OrderInformation extends ConsumerWidget {
       }
     } catch (_) {}
 
-    // fallback to previous defaults
     if (names.isEmpty) {
       names = [
         TrKeys.delivery,
@@ -87,7 +81,6 @@ class OrderInformation extends ConsumerWidget {
       ].map((e) => e.toString()).toList();
     }
 
-    // Map the API service type names to the app's internal keys/labels (TrKeys)
     return names.map((name) {
       final lower = name.toLowerCase();
       if (lower.contains('dine')) return TrKeys.dine;
@@ -99,12 +92,185 @@ class OrderInformation extends ConsumerWidget {
       }
       if (lower.contains('grab')) return TrKeys.grab;
       if (lower.contains('panda')) return TrKeys.food;
-      return name; // unknown -> show raw name
+      return name;
     }).toList();
   }
 
+  Future<bool?> _showConflictDialog(BuildContext ctx, int existingOrderId) {
+    return showDialog<bool>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Text(
+          AppHelpers.getTranslation('Active Order Detected'),
+          style:
+              GoogleFonts.inter(fontSize: 18.sp, fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          AppHelpers.getTranslation(
+              'This table already has an active order (#$existingOrderId). '
+              'Do you want to add your items to it and proceed to checkout?'),
+          style: GoogleFonts.inter(fontSize: 14.sp),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: Text(
+              AppHelpers.getTranslation(TrKeys.cancel),
+              style: GoogleFonts.inter(color: AppStyle.red),
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppStyle.primary,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8.r)),
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: Text(
+              AppHelpers.getTranslation(TrKeys.confirm),
+              style: GoogleFonts.inter(color: AppStyle.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Reorders [state]'s cart items into [existingOrderId] on [tableId],
+  /// appends them to LocalStorage, then navigates to the payment screen
+  /// showing all items (previous + new).
+  Future<void> _handleTableConflict({
+    required BuildContext context,
+    required int tableId,
+    required int existingOrderId,
+    required RightSideState state,
+  }) async {
+    if (mounted) setState(() => _isProcessingConflict = true);
+    try {
+      final hooks = OrderHooks();
+      final stocks = state.paginateResponse?.stocks ?? [];
+      final bagProds = state.bags[state.selectedBagIndex].bagProducts;
+
+      final calcResult = await hooks.calculation.calculate(
+        stocks: stocks,
+        orderType: state.orderType,
+        bagProducts: bagProds,
+      );
+      final enhancedProducts = hooks.enhancedProduct.build(
+        stocks: stocks,
+        calculationData: calcResult.calculationData,
+        orderType: state.orderType,
+      );
+
+      if (enhancedProducts.isEmpty || !mounted) return;
+
+      // Build display items using stockId-keyed lookup (matches page_view_item pattern).
+      final calcByStockId = <int, Map<String, dynamic>>{};
+      for (final entry in calcResult.calculationData) {
+        if (entry.containsKey('billDiscountAmount')) continue;
+        final sid = entry['stockId'];
+        if (sid == null) continue;
+        calcByStockId[sid is int ? sid : (sid as num).toInt()] = entry;
+      }
+      final displayItems = stocks.map((stock) {
+        final qty = stock.quantity ?? 1;
+        final unitPrice = stock.stock?.price ?? 0;
+        final addonsTotal =
+            (stock.addons ?? []).fold<num>(0, (s, a) => s + (a.price ?? 0));
+        final total = (unitPrice * qty) + addonsTotal;
+        final stockId = stock.stock?.id;
+        final cd = stockId != null
+            ? (calcByStockId[stockId] ?? <String, dynamic>{})
+            : <String, dynamic>{};
+        return <String, dynamic>{
+          'stockId': stockId ?? 0,
+          'countableId': stock.stock?.countableId,
+          'uuid': stock.stock?.product?.uuid,
+          'productName': stock.stock?.product?.translation?.title ?? '',
+          'quantity': qty,
+          'totalPrice': total,
+          'taxAmount': cd['taxAmount'] ?? 0,
+          'serviceChargeAmount': cd['serviceChargeAmount'] ?? 0,
+          'taxPercent': cd['taxPercent'] ?? 0,
+          'serviceChargePercent': cd['serviceChargePercent'] ?? 0,
+          'serviceChargeType': cd['serviceChargeType'] ?? '',
+          'categoryId': stock.stock?.product?.category?.id,
+          'categoryName': stock.stock?.product?.category?.translation?.title,
+          'addonNames': (stock.addons ?? [])
+              .map((a) => a.product?.translation?.title ?? '')
+              .where((s) => s.isNotEmpty)
+              .toList(),
+          'addons': (stock.addons ?? [])
+              .map((a) => <String, dynamic>{
+                    'stockId': a.id ?? 0,
+                    'countableId': a.stockId,
+                    'quantity': a.quantity ?? 1,
+                    'price': a.price ?? 0,
+                  })
+              .toList(),
+        };
+      }).toList();
+
+      // Add new items to existing server order.
+      final rightNotifier = ref.read(rightSideProvider.notifier);
+      final ok = await rightNotifier.reorderDineInOrder(
+        orderId: existingOrderId,
+        enhancedProducts: enhancedProducts,
+        context: context,
+      );
+      if (ok == null || !mounted) return;
+
+      // Persist combined display items (old + new).
+      final existing = LocalStorage.getTableItems(tableId);
+      await LocalStorage.setTableItems(tableId, [...existing, ...displayItems]);
+
+      // Register cashout state so price_info.dart takes the table-cashout path.
+      ref.read(tablesProvider.notifier).setTableOrderOnly(tableId, existingOrderId);
+      await LocalStorage.setCashoutTableId(tableId);
+
+      // Build PriceDate from ALL items for the payment screen.
+      final allItems = LocalStorage.getTableItems(tableId);
+      final num allTotal = allItems.fold<num>(
+          0, (sum, item) => sum + ((item['totalPrice'] as num?) ?? 0));
+      final builtStocks = allItems.map((item) {
+        final num qty = (item['quantity'] as num?) ?? 1;
+        final num itemTotal = (item['totalPrice'] as num?) ?? 0;
+        final num unitPrice = qty > 0 ? itemTotal / qty : itemTotal;
+        return ProductData(
+          stock: Stocks(
+            id: item['stockId'] as int?,
+            countableId: item['countableId'] as int?,
+            price: unitPrice,
+            totalPrice: itemTotal,
+            quantity: qty.toInt(),
+            product: ProductData(
+              uuid: item['uuid'] as String?,
+              translation: Translation(title: item['productName'] as String?),
+            ),
+          ),
+          totalPrice: itemTotal,
+          quantity: qty.toInt(),
+        );
+      }).toList();
+      final allPriceDate = PriceDate(stocks: builtStocks, totalPrice: allTotal);
+
+      if (!mounted) return;
+
+      // Navigate to payment screen showing all order items.
+      rightNotifier.updatePaginateResponse(allPriceDate);
+      ref.read(mainProvider.notifier).setPriceDate(allPriceDate);
+
+      if (mounted) context.maybePop();
+    } finally {
+      if (mounted) setState(() => _isProcessingConflict = false);
+    }
+  }
+
   @override
-  Widget build(BuildContext context, ref) {
+  Widget build(BuildContext context) {
     final notifier = ref.read(rightSideProvider.notifier);
     final state = ref.watch(rightSideProvider);
     final BagData bag = state.bags[state.selectedBagIndex];
@@ -195,51 +361,6 @@ class OrderInformation extends ConsumerWidget {
                               24.verticalSpace,
                             ],
                           ),
-                        // PopupMenuButton<int>(
-                        //   enabled: bag.selectedCurrency ==
-                        //       null, // disable when already preset
-                        //   itemBuilder: (context) {
-                        //     return state.currencies
-                        //         .map(
-                        //           (currency) => PopupMenuItem<int>(
-                        //             value: currency.id,
-                        //             child: Text(
-                        //               '${currency.title}(${currency.symbol})',
-                        //               style: GoogleFonts.inter(
-                        //                 fontWeight: FontWeight.w500,
-                        //                 fontSize: 14.sp,
-                        //                 color: AppStyle.black,
-                        //                 letterSpacing: -14 * 0.02,
-                        //               ),
-                        //             ),
-                        //           ),
-                        //         )
-                        //         .toList();
-                        //   },
-                        //   onSelected: notifier.setSelectedCurrency,
-                        //   shape: RoundedRectangleBorder(
-                        //     borderRadius: BorderRadius.circular(10.r),
-                        //   ),
-                        //   color: AppStyle.white,
-                        //   elevation: 10,
-                        //   child: SelectFromButton(
-                        //     title: state.selectedCurrency?.title ??
-                        //         AppHelpers.getTranslation(
-                        //             TrKeys.selectCurrency),
-                        //   ),
-                        // ),
-                        // Visibility(
-                        //   visible: state.selectCurrencyError != null,
-                        //   child: Padding(
-                        //     padding: EdgeInsets.only(top: 6.r, left: 4.r),
-                        //     child: Text(
-                        //       AppHelpers.getTranslation(
-                        //           state.selectCurrencyError ?? ""),
-                        //       style: GoogleFonts.inter(
-                        //           color: AppStyle.red, fontSize: 14.sp),
-                        //     ),
-                        //   ),
-                        // ),
                       ],
                     ),
                   ),
@@ -289,51 +410,6 @@ class OrderInformation extends ConsumerWidget {
                               24.verticalSpace,
                             ],
                           ),
-                        // PopupMenuButton<int>(
-                        //   initialValue: state.selectedPayment?.id,
-                        //   itemBuilder: (context) {
-                        //     return state.payments
-                        //         .map(
-                        //           (payment) => PopupMenuItem<int>(
-                        //             value: payment.id,
-                        //             child: Text(
-                        //               AppHelpers.getTranslation(
-                        //                   payment.tag ?? ""),
-                        //               style: GoogleFonts.inter(
-                        //                 fontWeight: FontWeight.w500,
-                        //                 fontSize: 14.sp,
-                        //                 color: AppStyle.black,
-                        //                 letterSpacing: -14 * 0.02,
-                        //               ),
-                        //             ),
-                        //           ),
-                        //         )
-                        //         .toList();
-                        //   },
-                        //   onSelected: notifier.setSelectedPayment,
-                        //   shape: RoundedRectangleBorder(
-                        //     borderRadius: BorderRadius.circular(10.r),
-                        //   ),
-                        //   color: AppStyle.white,
-                        //   elevation: 10,
-                        //   child: SelectFromButton(
-                        //     title: AppHelpers.getTranslation(
-                        //         state.selectedPayment?.tag ??
-                        //             TrKeys.selectPayment),
-                        //   ),
-                        // ),
-                        // Visibility(
-                        //   visible: state.selectPaymentError != null,
-                        //   child: Padding(
-                        //     padding: EdgeInsets.only(top: 6.r, left: 4.r),
-                        //     child: Text(
-                        //       AppHelpers.getTranslation(
-                        //           state.selectPaymentError ?? ""),
-                        //       style: GoogleFonts.inter(
-                        //           color: AppStyle.red, fontSize: 14.sp),
-                        //     ),
-                        //   ),
-                        // ),
                       ],
                     ),
                   ),
@@ -464,8 +540,8 @@ class OrderInformation extends ConsumerWidget {
                 state: state,
                 bag: bag,
                 context: context,
-                subtotal: subtotal,
-                totalDiscount: totalDiscount,
+                subtotal: widget.subtotal,
+                totalDiscount: widget.totalDiscount,
               ),
               20.verticalSpace,
               Row(
@@ -474,45 +550,80 @@ class OrderInformation extends ConsumerWidget {
                   SizedBox(
                     width: 186.w,
                     child: LoginButton(
+                        isLoading: _isProcessingConflict,
+                        isActive: !_isProcessingConflict,
                         title: AppHelpers.getTranslation(TrKeys.placeOrder),
-                        onPressed: () {
-                          if (AppHelpers.isNumberRequiredToOrder() &&
-                              state.selectedUser?.phone == null &&
-                              state.selectedUser != null) {
-                            if (!(formKey.currentState?.validate() ?? false)) {
-                              return;
-                            }
-                          }
-                          notifier.placeOrder(
-                            checkYourNetwork: () {
-                              AppHelpers.showSnackBar(
-                                context,
-                                AppHelpers.getTranslation(
-                                    TrKeys.checkYourNetworkConnection),
-                              );
-                            },
-                            openSelectDeliveriesDrawer: () {
-                              // 1. Create a copy with the correct final values.
-                              final updatedResponse =
-                                  state.paginateResponse?.copyWith(
-                                totalPrice: finalTotal,
-                                totalDiscount: totalDiscount,
-                              );
+                        onPressed: _isProcessingConflict
+                            ? null
+                            : () async {
+                                if (AppHelpers.isNumberRequiredToOrder() &&
+                                    state.selectedUser?.phone == null &&
+                                    state.selectedUser != null) {
+                                  if (!(formKey.currentState?.validate() ??
+                                      false)) {
+                                    return;
+                                  }
+                                }
 
-                              // 2. THIS IS THE NEW, CRITICAL STEP:
-                              // Update the state that the payment screen actually uses.
-                              notifier.updatePaginateResponse(updatedResponse);
+                                // Proactive frontend conflict check: detect active order
+                                // on selected table before calling createOrder, so the
+                                // cashier is warned at "Place Order" time rather than
+                                // after entering payment details and hitting a 409.
+                                if (state.orderType == TrKeys.dine) {
+                                  final tableId = bag.selectedTable?.id;
+                                  if (tableId != null) {
+                                    // Hydrate tableOrders from Hive — the in-memory
+                                    // map may be empty if the tables page hasn't been
+                                    // visited yet in this session.
+                                    await ref
+                                        .read(tablesProvider.notifier)
+                                        .loadTableStatuses();
+                                    if (!mounted) return;
+                                    final existingOrderId = ref
+                                        .read(tablesProvider)
+                                        .tableOrders[tableId];
+                                    if (existingOrderId != null) {
+                                      if (!context.mounted) return;
+                                      final confirmed =
+                                          await _showConflictDialog(
+                                              context, existingOrderId);
+                                      if (confirmed != true || !mounted) return;
+                                      // ignore: use_build_context_synchronously
+                                      await _handleTableConflict(
+                                        context: context,
+                                        tableId: tableId,
+                                        existingOrderId: existingOrderId,
+                                        state: state,
+                                      );
+                                      return;
+                                    }
+                                  }
+                                }
 
-                              // 3. This line now correctly shows the payment screen
-                              //    using the data we just updated.
-                              ref
-                                  .read(mainProvider.notifier)
-                                  .setPriceDate(updatedResponse);
-
-                              context.maybePop();
-                            },
-                          );
-                        }),
+                                // No conflict — proceed with normal order flow.
+                                notifier.placeOrder(
+                                  checkYourNetwork: () {
+                                    AppHelpers.showSnackBar(
+                                      context,
+                                      AppHelpers.getTranslation(
+                                          TrKeys.checkYourNetworkConnection),
+                                    );
+                                  },
+                                  openSelectDeliveriesDrawer: () {
+                                    final updatedResponse =
+                                        state.paginateResponse?.copyWith(
+                                      totalPrice: widget.finalTotal,
+                                      totalDiscount: widget.totalDiscount,
+                                    );
+                                    notifier.updatePaginateResponse(
+                                        updatedResponse);
+                                    ref
+                                        .read(mainProvider.notifier)
+                                        .setPriceDate(updatedResponse);
+                                    context.maybePop();
+                                  },
+                                );
+                              }),
                   ),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -528,7 +639,7 @@ class OrderInformation extends ConsumerWidget {
                       ),
                       Text(
                         AppHelpers.numberFormat(
-                          finalTotal,
+                          widget.finalTotal,
                           symbol: bag.selectedCurrency?.symbol,
                         ),
                         style: GoogleFonts.inter(
@@ -595,7 +706,7 @@ class OrderInformation extends ConsumerWidget {
     );
   }
 
-  _priceItem({
+  Widget _priceItem({
     required String title,
     required num? price,
     required String? symbol,

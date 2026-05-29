@@ -279,6 +279,14 @@ class _MainPageState extends ConsumerState<MainPage>
         time++;
       });
     }
+    ref.listen<int>(
+      mainProvider.select((s) => s.selectIndex),
+      (previous, current) {
+        if (current == 0 && previous != null && previous != 0) {
+          ref.read(mainProvider.notifier).refreshProducts(context: context);
+        }
+      },
+    );
     final state = ref.watch(mainProvider);
     final pages = (user?.role == TrKeys.seller || user?.role == TrKeys.admin)
         ? list

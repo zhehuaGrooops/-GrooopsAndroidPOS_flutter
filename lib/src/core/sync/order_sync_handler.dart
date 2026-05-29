@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:admin_desktop/src/core/constants/constants.dart';
+import 'package:admin_desktop/src/core/utils/time_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import '../../models/models.dart';
@@ -89,6 +90,65 @@ class OrderSyncHandler {
       if (e == null || e is! Map) return false;
 
       final rawBody = Map<String, dynamic>.from((e['body'] ?? {}) as Map);
+
+      // Generate transactionId if the order was created offline without one.
+      final existingTxnId = rawBody['transaction_id'] as String?;
+      if (existingTxnId == null || existingTxnId.isEmpty) {
+        final user = LocalStorage.getUser();
+        final shopId =
+            (user?.shop?.id ?? user?.invite?.shopId ?? 0).toString();
+        String terminalId = '';
+        try {
+          final terminalBox = await HiveService.openBox(HiveBoxes.terminal);
+          terminalId = (terminalBox.get('terminal_id') as String?) ?? '';
+        } catch (_) {}
+        
+        final date = TimeService.dateFormatDDMMYYYY();
+        final prefix = 'POS-S$shopId-$terminalId-$date-CSH';
+        String? generatedTxnId;
+        try {
+          final client = _getClient(requireAuth: true);
+          final response = await client.post(
+            '/api/v1/rest/running-number/transaction/increment',
+            data: {'prefix': prefix},
+          );
+          int? runningNumber;
+          if (response.data is Map) {
+            final d = response.data['data'];
+            if (d is Map && d['number'] != null) {
+              runningNumber = int.tryParse(d['number'].toString());
+            } else if (d is int) {
+              runningNumber = d;
+            } else if (d is String) {
+              runningNumber = int.tryParse(d);
+            }
+            if (runningNumber == null && response.data['number'] != null) {
+              runningNumber =
+                  int.tryParse(response.data['number'].toString());
+            }
+          }
+          if (runningNumber != null) {
+            generatedTxnId =
+                '$prefix-${runningNumber.toString().padLeft(9, '0')}';
+          }
+        } catch (_) {}
+
+        if (generatedTxnId == null || generatedTxnId.isEmpty) {
+          // Backend unreachable — leave order pending, retry next tick.
+          return false;
+        }
+
+        rawBody['transaction_id'] = generatedTxnId;
+        rawBody['doc_no'] = generatedTxnId;
+
+        // Persist to Hive so transactionId is stable on retry / receipt print.
+        if (box.containsKey(key)) {
+          final storedMap = Map<String, dynamic>.from(box.get(key) as Map);
+          storedMap['body'] = rawBody;
+          await box.put(key, storedMap);
+        }
+      }
+
       final orderBody = OrderBodyData.fromJson(rawBody);
       final body = orderBody.toJson();
 

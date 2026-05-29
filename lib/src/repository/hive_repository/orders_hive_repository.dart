@@ -226,6 +226,14 @@ class OrdersHiveRepository extends OrdersRepository {
       final filtered = items.where((e) {
         final s = e.status ?? '';
         final matchesStatus = status == null || s == _statusText(status);
+        // Voided orders (old data pre-fix may still have status='new').
+        if (e.isVoided == true) return false;
+        // Conflict skeletons: created by createOrder on 409, have syncStatus='synced',
+        // empty products, and totalPrice=0. Never represent a real active order.
+        final isConflictSkeleton = e.meta?.syncStatus == 'synced' &&
+            (e.body?.enhancedProducts?.isEmpty ?? true) &&
+            (e.totalPrice ?? 0) == 0;
+        if (isConflictSkeleton) return false;
         final title = (e.body?.note ?? '').toString().toLowerCase();
         final matchesQuery =
             search == null || title.contains(search.toLowerCase());
@@ -449,6 +457,7 @@ class OrdersHiveRepository extends OrdersRepository {
       final updated = Map<String, dynamic>.from(raw);
       updated['is_voided'] = true;
       updated['sync_voided'] = false;
+      updated['status'] = 'canceled';
 
       final body = updated['body'];
       if (body is Map) {
@@ -914,7 +923,7 @@ class OrdersHiveRepository extends OrdersRepository {
           id: order.id,
           body: updatedBody,
           paymentId: order.paymentId,
-          status: order.status,
+          status: 'delivered',
           detailStatus: order.detailStatus,
           totalPrice: newTotal,
           userSnapshot: order.userSnapshot,

@@ -66,6 +66,6 @@ abstract class TimeService {
   }
 
   static String dateFormatDDMMYYYY([DateTime? time]) {
-    return DateFormat("ddMMyyyy").format(time ?? DateTime.now());
+    return DateFormat("yyyyMMdd").format(time ?? DateTime.now());
   }
 }

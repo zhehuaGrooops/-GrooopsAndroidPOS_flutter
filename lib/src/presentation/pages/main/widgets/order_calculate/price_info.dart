@@ -629,43 +629,6 @@ class PriceInfo extends StatelessWidget {
                                 },
                                 failure: (_, __) {},
                               );
-                            } else {
-                              // NORMAL ORDER: generate new doc no from running-number endpoint.
-                              final int? numericShopId =
-                                  LocalStorage.getUser()?.shop?.id ??
-                                      LocalStorage.getUser()?.invite?.shopId;
-                              final String shopId = (numericShopId ?? 0).toString();
-                              String terminalId = '';
-                              try {
-                                final termRes = await settingsRepository.getTerminalID();
-                                termRes.when(
-                                  success: (id) { terminalId = id ?? ''; },
-                                  failure: (err, status) { debugPrint('Failed to get terminal id: $err'); },
-                                );
-                              } catch (e) {
-                                debugPrint('Error while getting terminal id: $e');
-                              }
-                              final date = TimeService.dateFormatDDMMYYYY();
-                              final prefix = 'POS-S$shopId-$terminalId-$date-CSH';
-                              final result = await settingsRepository.generateTransactionID(prefix);
-                              result.when(
-                                success: (docNo) {
-                                  if (docNo != null && docNo.isNotEmpty) formattedTransactionId = docNo;
-                                },
-                                failure: (error, statusCode) {
-                                  debugPrint('running-number request error: $error');
-                                },
-                              );
-                              if (formattedTransactionId == null) {
-                                notifier.setOrderLoading(false);
-                                try {
-                                  if (context.mounted) {
-                                    AppHelpers.showSnackBar(context,
-                                        'Failed to obtain doc no from server. Order not created.');
-                                  }
-                                } catch (_) {}
-                                return;
-                              }
                             }
 
                             // Attach queue number and createdAt timestamp at order creation time.
@@ -728,6 +691,7 @@ class PriceInfo extends StatelessWidget {
                                   }
                                   notifier.clearCalculate();
                                   mainNotifier.setPriceDate(null);
+                                  if (context.mounted) mainNotifier.refreshProducts(context: context);
                                   notifier.removeSelectedTable();
                                   final tablesNotifier = ref.read(tablesProvider.notifier);
                                   // Exit ordering immediately so the table page (not
@@ -855,6 +819,7 @@ class PriceInfo extends StatelessWidget {
                                 // clear calculation/refund after successful order
                                 notifier.clearCalculate();
                                 mainNotifier.setPriceDate(null);
+                                if (context.mounted) mainNotifier.refreshProducts(context: context);
                                 notifier.removeSelectedTable();
 
                                 // clear table timer/order if this was a table checkout
@@ -955,6 +920,7 @@ class PriceInfo extends StatelessWidget {
                                   }
                                   notifier.clearCalculate();
                                   mainNotifier.setPriceDate(null);
+                                  if (context.mounted) mainNotifier.refreshProducts(context: context);
                                   notifier.removeSelectedTable();
                                   await LocalStorage.setCashoutTableId(null);
                                   conflictTablesNotifier
