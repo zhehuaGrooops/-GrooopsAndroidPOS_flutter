@@ -178,13 +178,23 @@ jobs:
             --build-number=${{ steps.version.outputs.build_number }}
 
       # ── 9. Rename APK to lowercase odera-{env}-{version}.apk ─────────────────
-      # Gradle outputFileName produces: Odera-{flavor}-{version}.apk (title-case)
       - name: Rename APK
         run: |
-          GRADLE_APK="build/app/outputs/flutter-apk/Odera-${{ steps.flavor.outputs.name }}-${{ steps.version.outputs.version_string }}.apk"
           FINAL_APK="build/app/outputs/flutter-apk/${{ steps.version.outputs.apk_name }}"
-          echo "Renaming ${GRADLE_APK} → ${FINAL_APK}"
-          mv "${GRADLE_APK}" "${FINAL_APK}"
+
+          # Flutter may copy to flutter-apk/ or leave in Gradle output dir — find it
+          SRC=$(find build/app/outputs -name "*.apk" 2>/dev/null | head -1)
+
+          if [ -z "$SRC" ]; then
+            echo "ERROR: No APK found. Output tree:"
+            find build/app/outputs -type f 2>/dev/null
+            exit 1
+          fi
+
+          echo "Found: ${SRC}"
+          echo "Target: ${FINAL_APK}"
+          mkdir -p "$(dirname "${FINAL_APK}")"
+          mv "${SRC}" "${FINAL_APK}"
 
       # ── 10. Generate release-notes.txt ────────────────────────────────────────
       - name: Generate release notes
